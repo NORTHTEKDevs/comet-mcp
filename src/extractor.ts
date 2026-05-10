@@ -16,47 +16,32 @@ export function parse_clipboard_answer(raw: string): string {
   return text.trim();
 }
 
-export type UiaNode = {
+export type UiaElement = {
   name: string;
   role: string;
-  bounds?: { x: number; y: number; w: number; h: number };
-  value?: string;
-  children?: UiaNode[];
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 };
 
-export type Citation = { n: number; title: string; url: string };
+export type Citation = { n: number; title: string };
 
-function find_subtree(node: UiaNode | null | undefined, predicate: (n: UiaNode) => boolean): UiaNode | null {
-  if (!node) return null;
-  if (predicate(node)) return node;
-  for (const child of node.children ?? []) {
-    const hit = find_subtree(child, predicate);
-    if (hit) return hit;
-  }
-  return null;
+export function walk_citations(elements: UiaElement[] | null | undefined): Citation[] {
+  if (!elements || elements.length === 0) return [];
+  const sources_header = elements.find(
+    (e) => /^sources$/i.test(e.name) && (e.role === "text" || e.role === "group" || e.role === "heading")
+  );
+  if (!sources_header) return [];
+  const links = elements
+    .filter((e) => /(hyperlink|link)/i.test(e.role) && e.top > sources_header.top && e.name.trim().length > 0)
+    .sort((a, b) => a.top - b.top);
+  return links.map((link, i) => ({ n: i + 1, title: link.name.trim() }));
 }
 
-function flatten(node: UiaNode | null | undefined): UiaNode[] {
-  if (!node) return [];
-  return [node, ...(node.children ?? []).flatMap(flatten)];
-}
-
-export function walk_citations(tree: UiaNode | null | undefined): Citation[] {
-  if (!tree) return [];
-  const sources_node = find_subtree(tree, (n) => /^sources$/i.test(n.name));
-  if (!sources_node) return [];
-  const links = flatten(sources_node).filter((n) => n.role === "hyperlink" && n.value);
-  return links.map((link, i) => ({
-    n: i + 1,
-    title: link.name,
-    url: link.value!
-  }));
-}
-
-export function is_login_wall(tree: UiaNode | null | undefined): boolean {
-  if (!tree) return false;
-  const all = flatten(tree);
-  const has_sign_in = all.some((n) => /sign in/i.test(n.name));
-  const has_continue_button = all.some((n) => n.role === "button" && /continue with/i.test(n.name));
+export function is_login_wall(elements: UiaElement[] | null | undefined): boolean {
+  if (!elements || elements.length === 0) return false;
+  const has_sign_in = elements.some((e) => /sign in/i.test(e.name));
+  const has_continue_button = elements.some((e) => e.role === "button" && /continue with/i.test(e.name));
   return has_sign_in && has_continue_button;
 }

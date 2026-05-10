@@ -51,34 +51,35 @@ describe("parse_clipboard_answer", () => {
 });
 
 describe("walk_citations", () => {
-  it("extracts {n, title, url} for each citation under Sources", () => {
-    const sources = walk_citations(answer_fixture);
+  it("extracts {n, title} for each citation under Sources", () => {
+    const sources = walk_citations(answer_fixture.elements);
     expect(sources).toEqual([
-      { n: 1, title: "Example Domain", url: "https://example.com" },
-      { n: 2, title: "Other Domain", url: "https://other.com" }
+      { n: 1, title: "Example Domain" },
+      { n: 2, title: "Other Domain" }
     ]);
   });
 
-  it("returns empty array if no Sources subtree present", () => {
-    expect(walk_citations(login_fixture)).toEqual([]);
+  it("returns empty array if no Sources heading present", () => {
+    expect(walk_citations(login_fixture.elements)).toEqual([]);
   });
 
-  it("returns empty array on null/empty tree", () => {
-    expect(walk_citations(null as any)).toEqual([]);
-    expect(walk_citations({ name: "", role: "window" })).toEqual([]);
+  it("returns empty array on null/empty input", () => {
+    expect(walk_citations(null)).toEqual([]);
+    expect(walk_citations([])).toEqual([]);
   });
 });
 
 describe("is_login_wall", () => {
   it("returns true when 'Sign in' text + 'Continue with' button both present", () => {
-    expect(is_login_wall(login_fixture)).toBe(true);
+    expect(is_login_wall(login_fixture.elements)).toBe(true);
   });
 
   it("returns false on a normal answer page", () => {
-    expect(is_login_wall(answer_fixture)).toBe(false);
+    expect(is_login_wall(answer_fixture.elements)).toBe(false);
   });
 
-  it("returns false on null/empty tree", () => {
-    expect(is_login_wall(null as any)).toBe(false);
+  it("returns false on null/empty input", () => {
+    expect(is_login_wall(null)).toBe(false);
+    expect(is_login_wall([])).toBe(false);
   });
 });

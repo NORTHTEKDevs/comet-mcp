@@ -1,5 +1,5 @@
 import type { GhostTools, GhostWindow } from "./ghost_client.js";
-import { is_login_wall, parse_clipboard_answer, walk_citations, is_stream_stable, type Citation, type UiaNode } from "./extractor.js";
+import { is_login_wall, parse_clipboard_answer, walk_citations, is_stream_stable, type Citation, type UiaElement } from "./extractor.js";
 
 const COMET_EXE = process.env.COMET_EXE_PATH
   ?? `${process.env.LOCALAPPDATA}\\Comet\\Application\\Comet.exe`;
@@ -24,35 +24,38 @@ export class CometDriver {
     this.busy = true;
     try {
       const win = await this.find_or_launch_comet();
-      await this.g.focus_window(win.handle);
+      await this.g.focus_window(win.name);
       await sleep(300);
 
-      const initial_tree = (await this.g.describe_screen()).tree as UiaNode;
-      if (is_login_wall(initial_tree)) {
+      const initial = await this.g.describe_screen(win.name);
+      if (is_login_wall(initial.elements)) {
         throw new Error("Comet shows a sign-in wall. Open Comet manually and sign in once, then retry.");
       }
 
-      await this.g.hotkey("Ctrl+L");
+      // Focus address/ask bar, paste query (ghost_type needs an element selector; clipboard paste is the workaround).
+      await this.g.hotkey(["Ctrl"], "L");
       await sleep(150);
-      await this.g.type(query);
+      await this.g.set_clipboard(query);
+      await sleep(60);
+      await this.g.hotkey(["Ctrl"], "V");
+      await sleep(80);
       await this.g.press("Enter");
 
-      const { final_tree, truncated } = await this.poll_until_stable(timeout_ms);
-      await this.g.hotkey("Ctrl+A");
+      const { final_elements, truncated } = await this.poll_until_stable(win.name, timeout_ms);
+      await this.g.hotkey(["Ctrl"], "A");
       await sleep(80);
-      await this.g.hotkey("Ctrl+C");
+      await this.g.hotkey(["Ctrl"], "C");
       await sleep(120);
       const cb = await this.g.get_clipboard();
       let answer = parse_clipboard_answer(cb.text ?? "");
       if (answer.length < 10) {
-        // one retry
-        await this.g.hotkey("Ctrl+C");
+        await this.g.hotkey(["Ctrl"], "C");
         await sleep(150);
         const cb2 = await this.g.get_clipboard();
         answer = parse_clipboard_answer(cb2.text ?? "");
         if (answer.length < 10) throw new Error("clipboard empty after answer extraction");
       }
-      const sources = walk_citations(final_tree);
+      const sources = walk_citations(final_elements);
       return truncated ? { answer, sources, truncated: true } : { answer, sources };
     } finally {
       this.busy = false;
@@ -74,28 +77,26 @@ export class CometDriver {
 
   private async find_comet(): Promise<GhostWindow | null> {
     const { windows } = await this.g.list_windows();
-    return windows.find((w) =>
-      /comet\.exe$/i.test(w.process) || /perplexity|comet/i.test(w.title)
-    ) ?? null;
+    return windows.find((w) => /comet|perplexity/i.test(w.name)) ?? null;
   }
 
-  private async poll_until_stable(timeout_ms: number): Promise<{ final_tree: UiaNode; truncated: boolean }> {
+  private async poll_until_stable(window_name: string, timeout_ms: number): Promise<{ final_elements: UiaElement[]; truncated: boolean }> {
     const deadline = Date.now() + timeout_ms;
     let prev_text = "";
-    let last_tree: UiaNode | null = null;
+    let last_elements: UiaElement[] = [];
     while (Date.now() < deadline) {
       await sleep(STREAM_POLL_MS);
-      const { tree } = await this.g.describe_screen();
-      last_tree = tree as UiaNode;
-      const sources_present = walk_citations(last_tree).length > 0;
-      const curr_text = extract_visible_text(last_tree);
+      const { elements } = await this.g.describe_screen(window_name);
+      last_elements = elements;
+      const sources_present = walk_citations(elements).length > 0;
+      const curr_text = extract_visible_text(elements);
       if (sources_present && is_stream_stable(prev_text, curr_text)) {
-        return { final_tree: last_tree, truncated: false };
+        return { final_elements: elements, truncated: false };
       }
       prev_text = curr_text;
     }
-    if (!last_tree) throw new Error("describe_screen never returned a tree");
-    return { final_tree: last_tree, truncated: true };
+    if (last_elements.length === 0) throw new Error("describe_screen never returned elements");
+    return { final_elements: last_elements, truncated: true };
   }
 }
 
@@ -103,9 +104,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function extract_visible_text(node: UiaNode | null | undefined): string {
-  if (!node) return "";
-  const own = node.role === "text" ? node.name : "";
-  const child_text = (node.children ?? []).map(extract_visible_text).join(" ");
-  return (own + " " + child_text).trim();
+function extract_visible_text(elements: UiaElement[]): string {
+  return elements
+    .filter((e) => e.role === "text")
+    .map((e) => e.name)
+    .join(" ")
+    .trim();
 }

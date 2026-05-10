@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import type { UiaElement } from "./extractor.js";
 
 type PendingResolver = {
   resolve: (value: unknown) => void;
@@ -60,7 +61,7 @@ export class GhostClient {
   }
 }
 
-export type GhostWindow = { handle: number; title: string; process: string };
+export type GhostWindow = { name: string; pid: number; focused: boolean };
 
 export function spawn_ghost(exe_path: string): GhostClient {
   const child = spawn(exe_path, [], { stdio: ["pipe", "pipe", "pipe"] });
@@ -68,25 +69,21 @@ export function spawn_ghost(exe_path: string): GhostClient {
   return client;
 }
 
-// Typed sugar over `tools/call`. Each method matches a Ghost MCP tool.
 export class GhostTools {
   constructor(private c: GhostClient) {}
 
-  private async tool<T>(name: string, args: unknown = {}): Promise<T> {
-    const result = await this.c.call("tools/call", { name, arguments: args });
-    // MCP tools return { content: [{ type: "text", text: "..." }] }; Ghost returns
-    // structured JSON inside the text. Parse it.
-    const content = (result as any)?.content?.[0]?.text;
-    if (typeof content !== "string") return result as T;
-    try { return JSON.parse(content) as T; } catch { return content as T; }
+  private call<T>(method: string, args: unknown = {}): Promise<T> {
+    return this.c.call(method, args) as Promise<T>;
   }
 
-  list_windows(): Promise<{ windows: GhostWindow[] }> { return this.tool("ghost_list_windows"); }
-  focus_window(handle: number): Promise<unknown> { return this.tool("ghost_focus_window", { handle }); }
-  launch(path: string): Promise<unknown> { return this.tool("ghost_launch", { path }); }
-  hotkey(combo: string): Promise<unknown> { return this.tool("ghost_hotkey", { combo }); }
-  type(text: string): Promise<unknown> { return this.tool("ghost_type", { text }); }
-  press(key: string): Promise<unknown> { return this.tool("ghost_press", { key }); }
-  get_clipboard(): Promise<{ text: string }> { return this.tool("ghost_get_clipboard"); }
-  describe_screen(): Promise<{ tree: unknown }> { return this.tool("ghost_describe_screen"); }
+  list_windows(): Promise<{ windows: GhostWindow[] }> { return this.call("ghost_list_windows"); }
+  focus_window(name: string): Promise<{ ok: true }> { return this.call("ghost_focus_window", { name }); }
+  launch(path: string): Promise<{ ok: true }> { return this.call("ghost_launch", { path }); }
+  hotkey(modifiers: string[], key: string): Promise<{ ok: true }> { return this.call("ghost_hotkey", { modifiers, key }); }
+  press(key: string): Promise<{ ok: true }> { return this.call("ghost_press", { key }); }
+  get_clipboard(): Promise<{ text: string }> { return this.call("ghost_get_clipboard"); }
+  set_clipboard(text: string): Promise<{ ok: true }> { return this.call("ghost_set_clipboard", { text }); }
+  describe_screen(window?: string): Promise<{ elements: UiaElement[] }> {
+    return this.call("ghost_describe_screen", window ? { window } : {});
+  }
 }

@@ -1,8 +1,7 @@
 {
-  "name": "Comet",
-  "role": "window",
-  "children": [
-    { "name": "Sign in to Perplexity", "role": "text" },
-    { "name": "Continue with Google", "role": "button" }
+  "elements": [
+    { "name": "Comet", "role": "window", "left": 0, "top": 0, "right": 1200, "bottom": 800 },
+    { "name": "Sign in to Perplexity", "role": "text", "left": 200, "top": 300, "right": 800, "bottom": 340 },
+    { "name": "Continue with Google", "role": "button", "left": 200, "top": 400, "right": 500, "bottom": 440 }
   ]
 }
