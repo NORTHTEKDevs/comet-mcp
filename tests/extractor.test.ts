@@ -7,7 +7,7 @@ describe("is_stream_stable", () => {
   });
 
   it("returns true when previous and current are identical and non-trivial", () => {
-    expect(is_stream_stable("a complete answer", "a complete answer")).toBe(true);
+    expect(is_stream_stable("a complete and stable answer", "a complete and stable answer")).toBe(true);
   });
 
   it("returns false when both are empty", () => {
