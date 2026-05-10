@@ -1,0 +1,8 @@
+{
+  "name": "Comet",
+  "role": "window",
+  "children": [
+    { "name": "Sign in to Perplexity", "role": "text" },
+    { "name": "Continue with Google", "role": "button" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "Comet",
+  "role": "window",
+  "children": [
+    {
+      "name": "Answer",
+      "role": "group",
+      "children": [
+        { "name": "The answer body text here.", "role": "text" }
+      ]
+    },
+    {
+      "name": "Sources",
+      "role": "group",
+      "children": [
+        { "name": "Example Domain", "role": "hyperlink", "value": "https://example.com" },
+        { "name": "Other Domain", "role": "hyperlink", "value": "https://other.com" }
+      ]
+    }
+  ]
+}

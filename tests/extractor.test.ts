@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { is_stream_stable, parse_clipboard_answer } from "../src/extractor.js";
+import { is_stream_stable, parse_clipboard_answer, walk_citations, is_login_wall } from "../src/extractor.js";
+import answer_fixture from "./fixtures/answer-with-citations.json" with { type: "json" };
+import login_fixture from "./fixtures/login-wall.json" with { type: "json" };
 
 describe("is_stream_stable", () => {
   it("returns false when current is longer than previous", () => {
@@ -45,5 +47,38 @@ describe("parse_clipboard_answer", () => {
 
   it("returns empty string on whitespace-only input", () => {
     expect(parse_clipboard_answer("   \n\t  ")).toBe("");
+  });
+});
+
+describe("walk_citations", () => {
+  it("extracts {n, title, url} for each citation under Sources", () => {
+    const sources = walk_citations(answer_fixture);
+    expect(sources).toEqual([
+      { n: 1, title: "Example Domain", url: "https://example.com" },
+      { n: 2, title: "Other Domain", url: "https://other.com" }
+    ]);
+  });
+
+  it("returns empty array if no Sources subtree present", () => {
+    expect(walk_citations(login_fixture)).toEqual([]);
+  });
+
+  it("returns empty array on null/empty tree", () => {
+    expect(walk_citations(null as any)).toEqual([]);
+    expect(walk_citations({ name: "", role: "window" })).toEqual([]);
+  });
+});
+
+describe("is_login_wall", () => {
+  it("returns true when 'Sign in' text + 'Continue with' button both present", () => {
+    expect(is_login_wall(login_fixture)).toBe(true);
+  });
+
+  it("returns false on a normal answer page", () => {
+    expect(is_login_wall(answer_fixture)).toBe(false);
+  });
+
+  it("returns false on null/empty tree", () => {
+    expect(is_login_wall(null as any)).toBe(false);
   });
 });
