@@ -1,11 +1,13 @@
 import type { GhostTools, GhostWindow } from "./ghost_client.js";
-import { is_login_wall, parse_clipboard_answer, walk_citations, is_stream_stable, type Citation, type UiaElement } from "./extractor.js";
+import { extract_from_screenshot, type Citation } from "./vision_extractor.js";
+import { poll_until_stable } from "./screenshot_stability.js";
 
 const COMET_EXE = process.env.COMET_EXE_PATH
   ?? `${process.env.LOCALAPPDATA}\\Comet\\Application\\Comet.exe`;
 const LAUNCH_POLL_MS = 500;
 const LAUNCH_MAX_MS = 8000;
-const STREAM_POLL_MS = 200;
+const STREAM_POLL_MS = 1000;
+const STREAM_INITIAL_DELAY_MS = 2000;
 const DEFAULT_TIMEOUT_MS = 300_000;
 
 export type AskResult = {
@@ -27,12 +29,7 @@ export class CometDriver {
       await this.g.focus_window(win.name);
       await sleep(300);
 
-      const initial = await this.g.describe_screen(win.name);
-      if (is_login_wall(initial.elements)) {
-        throw new Error("Comet shows a sign-in wall. Open Comet manually and sign in once, then retry.");
-      }
-
-      // Focus address/ask bar, paste query (ghost_type needs an element selector; clipboard paste is the workaround).
+      // Focus address/ask bar, paste query, submit.
       await this.g.hotkey(["Ctrl"], "L");
       await sleep(150);
       await this.g.set_clipboard(query);
@@ -41,22 +38,27 @@ export class CometDriver {
       await sleep(80);
       await this.g.press("Enter");
 
-      const { final_elements, truncated } = await this.poll_until_stable(win.name, timeout_ms);
-      await this.g.hotkey(["Ctrl"], "A");
-      await sleep(80);
-      await this.g.hotkey(["Ctrl"], "C");
-      await sleep(120);
-      const cb = await this.g.get_clipboard();
-      let answer = parse_clipboard_answer(cb.text ?? "");
-      if (answer.length < 10) {
-        await this.g.hotkey(["Ctrl"], "C");
-        await sleep(150);
-        const cb2 = await this.g.get_clipboard();
-        answer = parse_clipboard_answer(cb2.text ?? "");
-        if (answer.length < 10) throw new Error("clipboard empty after answer extraction");
+      // Wait for answer to start streaming, then for screenshot to stabilize.
+      const stab = await poll_until_stable(this.g, {
+        poll_ms: STREAM_POLL_MS,
+        timeout_ms,
+        initial_delay_ms: STREAM_INITIAL_DELAY_MS
+      });
+
+      const result = await extract_from_screenshot(stab.png_base64, query);
+      const truncated = !stab.stable;
+
+      if (!result.answer) {
+        // One retry: sometimes the first vision pass catches a half-rendered page.
+        await sleep(1500);
+        const { png_base64 } = await this.g.screenshot_region({ foreground: true });
+        const retry = await extract_from_screenshot(png_base64, query);
+        if (!retry.answer) {
+          throw new Error("vision could not read the answer (two attempts). Comet may not have completed the query.");
+        }
+        return truncated ? { ...retry, truncated: true } : retry;
       }
-      const sources = walk_citations(final_elements);
-      return truncated ? { answer, sources, truncated: true } : { answer, sources };
+      return truncated ? { ...result, truncated: true } : result;
     } finally {
       this.busy = false;
     }
@@ -79,35 +81,8 @@ export class CometDriver {
     const { windows } = await this.g.list_windows();
     return windows.find((w) => /comet|perplexity/i.test(w.name)) ?? null;
   }
-
-  private async poll_until_stable(window_name: string, timeout_ms: number): Promise<{ final_elements: UiaElement[]; truncated: boolean }> {
-    const deadline = Date.now() + timeout_ms;
-    let prev_text = "";
-    let last_elements: UiaElement[] = [];
-    while (Date.now() < deadline) {
-      await sleep(STREAM_POLL_MS);
-      const { elements } = await this.g.describe_screen(window_name);
-      last_elements = elements;
-      const sources_present = walk_citations(elements).length > 0;
-      const curr_text = extract_visible_text(elements);
-      if (sources_present && is_stream_stable(prev_text, curr_text)) {
-        return { final_elements: elements, truncated: false };
-      }
-      prev_text = curr_text;
-    }
-    if (last_elements.length === 0) throw new Error("describe_screen never returned elements");
-    return { final_elements: last_elements, truncated: true };
-  }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-function extract_visible_text(elements: UiaElement[]): string {
-  return elements
-    .filter((e) => e.role === "text")
-    .map((e) => e.name)
-    .join(" ")
-    .trim();
 }

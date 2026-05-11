@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import type { UiaElement } from "./extractor.js";
 
 type PendingResolver = {
   resolve: (value: unknown) => void;
@@ -83,7 +82,7 @@ export class GhostTools {
   press(key: string): Promise<{ ok: true }> { return this.call("ghost_press", { key }); }
   get_clipboard(): Promise<{ text: string }> { return this.call("ghost_get_clipboard"); }
   set_clipboard(text: string): Promise<{ ok: true }> { return this.call("ghost_set_clipboard", { text }); }
-  describe_screen(window?: string): Promise<{ elements: UiaElement[] }> {
-    return this.call("ghost_describe_screen", window ? { window } : {});
+  screenshot_region(opts: { rect?: [number, number, number, number]; foreground?: boolean; max_dim?: number }): Promise<{ png_base64: string }> {
+    return this.call("ghost_screenshot_region", opts);
   }
 }
