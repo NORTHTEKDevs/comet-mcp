@@ -35,4 +35,14 @@ describe("parse_vision_json", () => {
   it("throws on invalid JSON", () => {
     expect(() => parse_vision_json("not json")).toThrow();
   });
+
+  it("strips trailing junk after the JSON object (Llama Vision quirk)", () => {
+    const result = parse_vision_json('{"answer":"x","sources":[]}}');
+    expect(result).toEqual({ answer: "x", sources: [] });
+  });
+
+  it("strips leading prose before the JSON object", () => {
+    const result = parse_vision_json('Here is the JSON: {"answer":"x","sources":[]}');
+    expect(result).toEqual({ answer: "x", sources: [] });
+  });
 });

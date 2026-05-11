@@ -22,10 +22,15 @@ Never wrap your output in markdown fences. Output ONLY the JSON object.`;
 let _client: Anthropic | null = null;
 function client(): Anthropic {
   if (!_client) {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY env var not set");
+    const auth_token = process.env.ANTHROPIC_AUTH_TOKEN;
+    const api_key = process.env.ANTHROPIC_API_KEY;
+    if (!auth_token && !api_key) {
+      throw new Error("ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY env var must be set");
     }
-    _client = new Anthropic();
+    // Prefer auth token (subscription billing) over API key (per-call billing).
+    _client = auth_token
+      ? new Anthropic({ authToken: auth_token, apiKey: null })
+      : new Anthropic({ apiKey: api_key });
   }
   return _client;
 }
@@ -56,6 +61,26 @@ export function parse_vision_json(text: string): ExtractResult {
   let cleaned = text.trim();
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+  }
+  // Some models (Llama Vision) emit trailing/leading junk around the JSON.
+  // Walk braces to find the first balanced JSON object and parse only that.
+  const start = cleaned.indexOf("{");
+  if (start >= 0) {
+    let depth = 0;
+    let in_str = false;
+    let esc = false;
+    for (let i = start; i < cleaned.length; i++) {
+      const c = cleaned[i];
+      if (esc) { esc = false; continue; }
+      if (c === "\\") { esc = true; continue; }
+      if (c === '"') { in_str = !in_str; continue; }
+      if (in_str) continue;
+      if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) {
+        cleaned = cleaned.slice(start, i + 1);
+        break;
+      }
+    }
   }
   const parsed = JSON.parse(cleaned);
   return {

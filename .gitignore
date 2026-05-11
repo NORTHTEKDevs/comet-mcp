@@ -5,3 +5,5 @@ dist/
 .env.local
 .DS_Store
 tests/fixtures/*.local.json
+scripts/inspect-output.json
+scripts/*-output.json

@@ -1,6 +1,10 @@
 import type { GhostTools, GhostWindow } from "./ghost_client.js";
-import { extract_from_screenshot, type Citation } from "./vision_extractor.js";
+import { extract_from_screenshot as anthropic_extract, type Citation } from "./vision_extractor.js";
+import { extract_from_screenshot as nvidia_extract } from "./nvidia_extractor.js";
 import { poll_until_stable } from "./screenshot_stability.js";
+
+const VISION_PROVIDER = (process.env.COMET_VISION_PROVIDER ?? "anthropic").toLowerCase();
+const extract_from_screenshot = VISION_PROVIDER === "nvidia" ? nvidia_extract : anthropic_extract;
 
 const COMET_EXE = process.env.COMET_EXE_PATH
   ?? `${process.env.LOCALAPPDATA}\\Comet\\Application\\Comet.exe`;
