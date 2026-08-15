@@ -46,14 +46,14 @@ export class CometDriver {
         initial_delay_ms: STREAM_INITIAL_DELAY_MS
       });
 
-      const result = await extract_from_screenshot(stab.png_base64, query);
+      const result = await extract_from_screenshot(stab.jpeg_base64, query);
       const truncated = !stab.stable;
 
       if (!result.answer) {
         // One retry: sometimes the first vision pass catches a half-rendered page.
         await sleep(1500);
-        const { png_base64 } = await this.g.screenshot_region({ foreground: true });
-        const retry = await extract_from_screenshot(png_base64, query);
+        const { jpeg_base64 } = await this.g.screenshot_region({ foreground: true });
+        const retry = await extract_from_screenshot(jpeg_base64, query);
         if (!retry.answer) {
           throw new Error("vision could not read the answer (two attempts). Comet may not have completed the query.");
         }

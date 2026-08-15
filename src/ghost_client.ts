@@ -87,8 +87,15 @@ export class GhostTools {
   }
   get_clipboard(): Promise<{ text: string }> { return this.call("ghost_clipboard", { op: "get" }); }
   set_clipboard(text: string): Promise<{ ok: true }> { return this.call("ghost_clipboard", { op: "set", text }); }
-  screenshot_region(opts: { rect?: [number, number, number, number]; foreground?: boolean; max_dim?: number }): Promise<{ png_base64: string }> {
-    return this.call("ghost_screenshot", opts);
+  // ghost_screenshot returns { jpeg_base64, size_bytes } - NOT png_base64. Verified live against
+  // ghost-mcp.exe 2026-08-15 via raw JSON-RPC probe. Fail closed on shape drift rather than letting
+  // an undefined field surface later as a crypto/vision TypeError far from the cause.
+  async screenshot_region(opts: { rect?: [number, number, number, number]; foreground?: boolean; max_dim?: number }): Promise<{ jpeg_base64: string }> {
+    const res = await this.call<Record<string, unknown>>("ghost_screenshot", opts);
+    if (typeof res?.jpeg_base64 !== "string") {
+      throw new Error(`ghost_screenshot returned no jpeg_base64 (keys: ${Object.keys(res ?? {}).join(", ")})`);
+    }
+    return { jpeg_base64: res.jpeg_base64 };
   }
 
   navigate(url: string, window: string): Promise<unknown> {

@@ -8,7 +8,7 @@ export type StabilityOpts = {
 };
 
 export type StabilityResult = {
-  png_base64: string;
+  jpeg_base64: string;
   stable: boolean;        // true if two consecutive hashes matched; false if timed out
   polls: number;
 };
@@ -20,19 +20,19 @@ export async function poll_until_stable(g: GhostTools, opts: StabilityOpts): Pro
   const deadline = Date.now() + opts.timeout_ms;
   let prev_hash = "";
   let polls = 0;
-  let last_png = "";
+  let last_jpeg = "";
   while (Date.now() < deadline) {
-    const { png_base64 } = await g.screenshot_region({ foreground: true });
-    last_png = png_base64;
+    const { jpeg_base64 } = await g.screenshot_region({ foreground: true });
+    last_jpeg = jpeg_base64;
     polls++;
-    const hash = createHash("sha256").update(png_base64).digest("hex");
+    const hash = createHash("sha256").update(jpeg_base64).digest("hex");
     if (hash === prev_hash && polls >= 2) {
-      return { png_base64, stable: true, polls };
+      return { jpeg_base64, stable: true, polls };
     }
     prev_hash = hash;
     await sleep(poll_ms);
   }
-  return { png_base64: last_png, stable: false, polls };
+  return { jpeg_base64: last_jpeg, stable: false, polls };
 }
 
 function sleep(ms: number): Promise<void> {
