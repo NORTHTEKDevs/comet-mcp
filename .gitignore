@@ -17,3 +17,6 @@ extension/config.js
 *.token
 .comet-mcp/
 .env.*
+
+# local, untracked session helpers
+scripts/*.local.mjs

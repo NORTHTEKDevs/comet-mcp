@@ -21,7 +21,7 @@ const SENTINEL_PASSWORD = "S3ntinel-Do-Not-Leak-9f31";
 function fakeActor(typeImpl?: (text: string, el: unknown) => Promise<{ ok: boolean; verified?: boolean }>) {
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const actor: ActorLike = {
-    navigate: async (u: string) => { calls.push({ method: "navigate", args: [u] }); return { ok: true }; },
+    navigate: async (u: string) => { calls.push({ method: "navigate", args: [u] }); TAB_URL = u; return { ok: true }; },
     click: async (el) => { calls.push({ method: "click", args: [el] }); return { ok: true }; },
     type: async (t, el) => {
       calls.push({ method: "type", args: [t, el] });
@@ -33,7 +33,10 @@ function fakeActor(typeImpl?: (text: string, el: unknown) => Promise<{ ok: boole
   return { actor, calls };
 }
 
-const fakeBridge = (): BridgeReader => ({ read: async () => ({ elements: [] }) });
+// The live tab url is origin binding's source of truth (see RunManager.bindLiveOrigin), so the
+// fake tab follows the fake actor's navigations exactly as a real browser does.
+let TAB_URL: string | undefined;
+const fakeBridge = (): BridgeReader => ({ read: async () => ({ url: TAB_URL, elements: [] }) });
 
 function fakeAudit() {
   const recs: Record<string, unknown>[] = [];
