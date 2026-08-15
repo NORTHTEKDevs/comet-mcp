@@ -37,10 +37,15 @@ const extract_from_screenshot = VISION_PROVIDER === "nvidia" ? nvidia_extract : 
 // its escape hatch ("if the Assistant proves undrivable by name, fall back to the existing
 // ask_perplexity address-bar path and SAY SO") - the button and input WERE drivable by name; only
 // the answer-read path uses that documented fallback mechanism, not the click/type path.
+//
+// Re-verified live 2026-08-15 via ghost_snapshot on a focused Comet window with the sidebar
+// already open: the input's accessible name is now "Type / for search modes" - Comet's own
+// auto-update renamed it from the "Ask anything\u2026" observed the day before. Not a driver bug;
+// track this constant as UI-version-coupled and re-verify by snapshot if this call ever regresses.
 export const ASSISTANT_UI = {
   buttonName: "Assistant",
   buttonRole: "button",
-  inputName: "Ask anything" + "\u2026",
+  inputName: "Type / for search modes",
   inputRole: "edit"
 } as const;
 
@@ -52,6 +57,17 @@ const navTuning = () => ({
   cycles: Number(process.env.COMET_NAV_CYCLES ?? 2)
 });
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+// The Assistant sidebar opens via an animated transition - its input is not yet in the a11y tree
+// the instant the toggle button's click dispatches. Live-verified 2026-08-15: a fresh Comet
+// window (post-relaunch) threw "Element not found: Type / for search modes" when assistantAsk
+// typed immediately after clicking, because the panel hadn't finished rendering yet. Poll for the
+// element rather than a blind sleep, matching navigate()'s verify-and-retry discipline elsewhere
+// in this file. Env-tunable like navTuning() so tests exercise the retry path without wall-clock.
+const assistantTuning = () => ({
+  waitMs: Number(process.env.COMET_ASSISTANT_INPUT_WAIT_MS ?? 5000),
+  pollMs: Number(process.env.COMET_ASSISTANT_INPUT_POLL_MS ?? 250)
+});
 
 const ASSISTANT_STABILITY_INITIAL_DELAY_MS = 2000;
 const DEFAULT_ASSISTANT_TIMEOUT_MS = 300_000;
@@ -210,7 +226,7 @@ export class CometActor {
   // RunManager.assistantAsk is what applies the untrusted-content/quarantine discipline on top of
   // this; this method has no opinion about content_mode and never redacts.
   async assistantAsk(query: string, timeoutMs: number = DEFAULT_ASSISTANT_TIMEOUT_MS): Promise<{ answer: string }> {
-    await this.click({ name: ASSISTANT_UI.buttonName, role: ASSISTANT_UI.buttonRole });
+    await this.openAssistantSidebar();
     await this.type(query, { name: ASSISTANT_UI.inputName, role: ASSISTANT_UI.inputRole });
     await this.submit();
 
@@ -218,8 +234,52 @@ export class CometActor {
       timeout_ms: timeoutMs,
       initial_delay_ms: ASSISTANT_STABILITY_INITIAL_DELAY_MS
     });
-    const result = await extract_from_screenshot(stab.png_base64, query);
+    const result = await extract_from_screenshot(stab.jpeg_base64, query);
     return { answer: result.answer };
+  }
+
+  // Opens the Assistant sidebar and waits for its input to exist. Two live failures (2026-08-15)
+  // shape this: (1) a click on an UNFOCUSED Comet window dispatches but toggles nothing while
+  // ghost reports ok - so focus explicitly before clicking, best-effort like navigate(); (2) the
+  // toggle click can be dropped outright (foreground stolen mid-action on this box) - so if the
+  // input never appears, run one full focus->click->wait cycle again before giving up. The input
+  // appearing is the gate, never the click's own ok/verified ("never trust an automation
+  // primitive's ok:true - verify the observable effect"). Clicking the toggle with the sidebar
+  // already open is idempotent (live-verified: it focuses the input rather than closing the panel).
+  private async openAssistantSidebar(): Promise<void> {
+    const { waitMs } = assistantTuning();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { await this.g.focus_window(await this.cometWindow()); } catch { /* best effort - the wait below is the gate */ }
+      await this.click({ name: ASSISTANT_UI.buttonName, role: ASSISTANT_UI.buttonRole });
+      try {
+        await this.waitForElement({ name: ASSISTANT_UI.inputName, role: ASSISTANT_UI.inputRole }, waitMs);
+        return;
+      } catch (err) {
+        if (attempt === 1) throw err;
+      }
+    }
+  }
+
+  // Polls ghost_find (no click/type side effect) until the element resolves or timeoutMs elapses,
+  // then rethrows the last miss. Used to wait out an open/close animation before driving a field
+  // that may not exist in the a11y tree yet. The window anchor is re-resolved EVERY poll: Comet's
+  // OS window title flips as tabs/sidebar settle ("Untitled - Comet" -> "Perplexity - Comet",
+  // observed live 2026-08-15), and a title captured before the transition makes ghost_find fail
+  // with "could not focus window" even though window and element both exist.
+  private async waitForElement(el: ElementRef, timeoutMs: number): Promise<void> {
+    const { pollMs } = assistantTuning();
+    const deadline = Date.now() + timeoutMs;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      try {
+        await this.g.find({ ...el, window: await this.cometWindow() });
+        return;
+      } catch (err) {
+        lastErr = err;
+        await sleep(pollMs);
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(`element not found within ${timeoutMs}ms: ${JSON.stringify(el)}`);
   }
 
   private async readValuePresent(el: ElementRef): Promise<boolean> {

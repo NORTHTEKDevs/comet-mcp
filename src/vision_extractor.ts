@@ -35,7 +35,7 @@ function client(): Anthropic {
   return _client;
 }
 
-export async function extract_from_screenshot(png_base64: string, query: string): Promise<ExtractResult> {
+export async function extract_from_screenshot(jpeg_base64: string, query: string): Promise<ExtractResult> {
   const resp = await client().messages.create({
     model: VISION_MODEL,
     max_tokens: 4096,
@@ -44,7 +44,7 @@ export async function extract_from_screenshot(png_base64: string, query: string)
       {
         role: "user",
         content: [
-          { type: "image", source: { type: "base64", media_type: "image/png", data: png_base64 } },
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg_base64 } },
           { type: "text", text: `The user asked: "${query}". Extract the answer and sources from this screenshot.` }
         ]
       }

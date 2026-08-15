@@ -14,7 +14,7 @@ If the answer is not yet visible or still loading, return {"answer":"","sources"
 If no sources visible, sources should be [].
 Output ONLY the JSON object.`;
 
-export async function extract_from_screenshot(png_base64: string, query: string): Promise<ExtractResult> {
+export async function extract_from_screenshot(jpeg_base64: string, query: string): Promise<ExtractResult> {
   const api_key = process.env.NVIDIA_API_KEY;
   if (!api_key) throw new Error("NVIDIA_API_KEY env var not set");
 
@@ -27,7 +27,7 @@ export async function extract_from_screenshot(png_base64: string, query: string)
         role: "user",
         content: [
           { type: "text", text: `${SYSTEM_PROMPT}\n\nThe user asked: "${query}". Extract the answer and sources from this screenshot.` },
-          { type: "image_url", image_url: { url: `data:image/png;base64,${png_base64}` } }
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${jpeg_base64}` } }
         ]
       }
     ]
