@@ -122,7 +122,8 @@ const CREDENTIAL_USE_INPUT = z.object({
   run_id: z.string().min(1),
   site: z.string().min(1),
   name: z.string().optional(),
-  role: z.string().optional()
+  role: z.string().optional(),
+  username: z.string().optional()
 });
 
 // Phase 5 Task 25. No name/role - there is no field to target, this returns plaintext directly
@@ -302,7 +303,8 @@ export function build_mcp_server(driver: CometDriver, runManager: RunManager) {
             run_id: { type: "string" },
             site: { type: "string", description: "Exact hostname the credential was saved for, e.g. \"example.com\". Must match both credential_sites and the run's current page origin - the field being typed into may be on any page, but the credential looked up is always for this exact site." },
             name: { type: "string", description: "Accessible name of the target field (usually the password field)." },
-            role: { type: "string", description: "Accessible role of the target field." }
+            role: { type: "string", description: "Accessible role of the target field." },
+            username: { type: "string", description: "Exact saved username to disambiguate when the vault holds several logins for `site` (e.g. accounts.google.com with multiple accounts). Without it, an ambiguous site fails closed with 'no stored credential for site'. Adds no privilege - every gate still applies; it only selects which already-authorised row is read, and it is recorded in the audit target." }
           },
           required: ["run_id", "site"]
         }
@@ -451,7 +453,7 @@ export function build_mcp_server(driver: CometDriver, runManager: RunManager) {
         const el: { name?: string; role?: string } = {};
         if (args.name !== undefined) el.name = args.name;
         if (args.role !== undefined) el.role = args.role;
-        const result = await runManager.credentialUse(args.run_id, args.site, el);
+        const result = await runManager.credentialUse(args.run_id, args.site, el, args.username);
         return textResult(result);
       }
       case "comet_credential_reveal": {

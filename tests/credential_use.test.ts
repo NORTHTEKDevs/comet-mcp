@@ -390,7 +390,8 @@ describe("phase 5 credential-use MCP wiring", () => {
     });
     const use = calls.find(c => c.method === "credentialUse");
     expect(use).toBeDefined();
-    expect(use!.args).toEqual(["run_1", "example.com", { name: "Password", role: "edit" }]);
+    // trailing undefined = the optional username disambiguator (2026-08-15), absent here
+    expect(use!.args).toEqual(["run_1", "example.com", { name: "Password", role: "edit" }, undefined]);
     const content = (result as any).content;
     const parsed = JSON.parse(content[0].text);
     expect(parsed).toEqual({ ok: true, result: { used: true } });
