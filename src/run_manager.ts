@@ -707,13 +707,21 @@ export class RunManager {
   // about which sites have a saved login. On allow, the plaintext exists only across the single
   // actor.type() call below; the result and every audit record carry a boolean only, never the
   // value.
-  async credentialUse(run_id: string, site: string, el: { name?: string; role?: string }): Promise<ActionResult> {
-    const killedResult = this.checkKillSwitch(run_id, "CREDENTIAL_USE", site);
+  // `username` (2026-08-15): a real vault can hold SEVERAL logins for one origin (live:
+  // accounts.google.com holds 3) and the store fails closed on that ambiguity by design, which
+  // made a multi-account site structurally unusable through this tool. The exact saved username
+  // is the disambiguator. It adds no privilege - every gate below still applies, it only selects
+  // WHICH already-authorised row gate 5 reads - and it is folded into the audit target so the
+  // record says which account a run authenticated as (the username is caller input and account
+  // identity, never vault-derived data).
+  async credentialUse(run_id: string, site: string, el: { name?: string; role?: string }, username?: string): Promise<ActionResult> {
+    const target = username === undefined ? site : `${site} user=${username}`;
+    const killedResult = this.checkKillSwitch(run_id, "CREDENTIAL_USE", target);
     if (killedResult) return killedResult;
 
     const { run, decision: policyDecision } = this.guard(run_id, "CREDENTIAL_USE");
     if (!policyDecision.allowed) {
-      this.record(run_id, "CREDENTIAL_USE", policyDecision, site);
+      this.record(run_id, "CREDENTIAL_USE", policyDecision, target);
       return denied(policyDecision.reason);
     }
 
@@ -726,19 +734,20 @@ export class RunManager {
       action: "CREDENTIAL_USE"
     });
     if (!credDecision.allowed) {
-      this.record(run_id, "CREDENTIAL_USE", credDecision, site);
+      this.record(run_id, "CREDENTIAL_USE", credDecision, target);
       return denied(credDecision.reason);
     }
 
-    // Gate 5 (use-only): the vault must actually hold a credential for `site`. Same fixed reason
-    // whether the store is unwired, the site has no row, or decryption failed - never distinguish
-    // those, so this gate cannot be used to enumerate which sites have a saved login. Only a
-    // caller who already cleared policy + site pre-auth + origin binding + a real approval can
-    // even reach this check.
-    const credential = this.credentialStore ? this.credentialStore.read(site) : null;
+    // Gate 5 (use-only): the vault must actually hold a credential for `site` (matching
+    // `username`, when given). Same fixed reason whether the store is unwired, the site has no
+    // row, the username matches no row, ambiguity forced a null, or decryption failed - never
+    // distinguish those, so this gate cannot be used to enumerate which sites have a saved login
+    // or which usernames exist. Only a caller who already cleared policy + site pre-auth + origin
+    // binding + a real approval can even reach this check.
+    const credential = this.credentialStore ? this.credentialStore.read(site, username) : null;
     if (!credential) {
       const decision = { allowed: false, reason: "no stored credential for site" };
-      this.record(run_id, "CREDENTIAL_USE", decision, site);
+      this.record(run_id, "CREDENTIAL_USE", decision, target);
       return denied(decision.reason);
     }
 
@@ -748,7 +757,7 @@ export class RunManager {
     // consumed further below never runs on this path).
     const irr = this.classifyIrreversible(run, "CREDENTIAL_USE", el.name ?? el.role);
     if (!irr.proceed) {
-      this.recordBlockedPendingApproval(run_id, "CREDENTIAL_USE", irr.tag, site);
+      this.recordBlockedPendingApproval(run_id, "CREDENTIAL_USE", irr.tag, target);
       return { ok: false, blocked: true, needs_approval: irr.tag };
     }
 
@@ -783,7 +792,7 @@ export class RunManager {
     } finally {
       this.audit.append({
         ts: this.now(), run_id, actor: "agent", action: "CREDENTIAL_USE",
-        target: site, policy_decision: typeResult ? "allow" : "error",
+        target, policy_decision: typeResult ? "allow" : "error",
         reason: typeResult
           ? `approval=${credDecision.approvalId ?? "unknown"} used=${typeResult.ok}${irr.reason !== undefined ? ` ${irr.reason}` : ""}`
           : `approval=${credDecision.approvalId ?? "unknown"} error=actor error`
