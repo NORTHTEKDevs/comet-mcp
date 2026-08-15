@@ -318,7 +318,10 @@ describe("Task 33: red-team the unattended surface", () => {
     const credentialStore = fakeCredentialStore({
       "clienta.example.com": { username: "alice", password: CLIENT_A_PASSWORD_SENTINEL }
     });
-    const bridge = fakeBridge(`Your one-time code is ${TWOFA_CODE_SENTINEL}.`, "https://mail.clienta.example.com");
+    // The tab url is now origin binding's source of truth (RunManager.bindLiveOrigin), so it must
+    // agree with where this mission actually is when the credential is used - a fake pinned to the
+    // mail host while typing clienta.example.com's password modelled a browser in two places at once.
+    const bridge = fakeBridge(`Your one-time code is ${TWOFA_CODE_SENTINEL}.`, "https://clienta.example.com");
     const quarantine = fakeQuarantine(async () => JSON.stringify({ code: TWOFA_CODE_SENTINEL }));
     const { actor, calls } = fakeActor();
     const { recs, audit } = fakeAudit();

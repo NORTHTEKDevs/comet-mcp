@@ -635,7 +635,7 @@ export class RunManager {
     const credDecision = checkCredentialFill({
       policy: run.policy,
       site,
-      currentOrigin: run.currentOrigin,
+      currentOrigin: await this.bindLiveOrigin(run),
       store: this.store,
       nowMs: this.now()
     });
@@ -728,7 +728,7 @@ export class RunManager {
     const credDecision = checkCredentialFill({
       policy: run.policy,
       site,
-      currentOrigin: run.currentOrigin,
+      currentOrigin: await this.bindLiveOrigin(run),
       store: this.store,
       nowMs: this.now(),
       action: "CREDENTIAL_USE"
@@ -830,7 +830,7 @@ export class RunManager {
     const credDecision = checkCredentialFill({
       policy: run.policy,
       site,
-      currentOrigin: run.currentOrigin,
+      currentOrigin: await this.bindLiveOrigin(run),
       store: this.store,
       nowMs: this.now(),
       action: "CREDENTIAL_REVEAL"
@@ -953,6 +953,39 @@ export class RunManager {
       const { value, ...rest } = el as Record<string, unknown>;
       return rest;
     });
+  }
+
+  // Origin binding's source of truth (security fix, found live 2026-08-15 against a real client
+  // Google account). `run.currentOrigin` is assigned ONLY by a successful navigate(), so any
+  // click- or redirect-driven page change leaves it stale and the run's belief about where the
+  // browser is diverges from where it actually is. Benign direction: a legitimate credential use
+  // is blocked. Dangerous direction: navigate to an allowlisted site, let a click or redirect
+  // carry the tab to an attacker page, and the cached origin still satisfies gate 2 while the
+  // REAL password is typed into whatever is actually loaded - credential exfiltration through the
+  // exact gate meant to prevent it. So every origin-bound credential path re-derives the origin
+  // from the extension's live tab url immediately before the gate runs.
+  //
+  // Fails CLOSED: an unreachable bridge, a non-object payload, or a missing/unparseable url all
+  // resolve to undefined, which gate 2 rejects ("current origin does not match credential site").
+  // The freshly observed origin is written back to the run so the later gates and the
+  // irreversible classifier reason about the same reality this check just measured.
+  private async bindLiveOrigin(run: RunEntry): Promise<string | undefined> {
+    let raw: unknown;
+    try {
+      raw = await this.bridge.read(undefined);
+    } catch {
+      run.currentOrigin = undefined;
+      return undefined;
+    }
+    let origin: string | undefined;
+    if (raw !== null && typeof raw === "object") {
+      const url = (raw as Record<string, unknown>).url;
+      if (typeof url === "string") {
+        try { origin = new URL(url).hostname.toLowerCase(); } catch { origin = undefined; }
+      }
+    }
+    run.currentOrigin = origin;
+    return origin;
   }
 
   // Quarantined (default): strip raw content, replace with a digest, keep the element map.

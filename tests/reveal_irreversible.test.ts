@@ -13,14 +13,17 @@ const SENTINEL = "hunter2-SENTINEL";
 const SITE = "bank.example";
 
 const mkActor = (): ActorLike => ({
-  navigate: async () => ({ ok: true }),
+  navigate: async (u: string) => { TAB_URL = u; return { ok: true }; },
   click: async () => ({ ok: true }),
   type: async () => ({ ok: true }),
   scroll: async () => ({ ok: true }),
   credentialFill: async () => ({ ok: true, filled: true }),
   submit: async () => ({ ok: true })
 });
-const bridge: BridgeReader = { read: async () => ({ url: `https://${SITE}/x`, elements: [] }) };
+// The live tab url is origin binding's source of truth (see RunManager.bindLiveOrigin), so the
+// fake tab follows navigation instead of pinning one url a real browser could not hold.
+let TAB_URL: string | undefined = `https://${SITE}/x`;
+const bridge: BridgeReader = { read: async () => ({ url: TAB_URL, elements: [] }) };
 const credStore = { read: (o: string) => (o === SITE ? { username: "u", password: SENTINEL } : null) };
 
 function approvals() {

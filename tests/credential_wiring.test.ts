@@ -19,7 +19,7 @@ function fakeActor(credentialFillImpl?: (el: unknown) => Promise<{ ok: boolean; 
   const calls: Array<{ method: string; args: unknown[] }> = [];
   return {
     calls,
-    navigate: async (u: string) => { calls.push({ method: "navigate", args: [u] }); },
+    navigate: async (u: string) => { calls.push({ method: "navigate", args: [u] }); TAB_URL = u; },
     click: async (el: unknown) => { calls.push({ method: "click", args: [el] }); return { ok: true }; },
     type: async (t: string, el: unknown) => { calls.push({ method: "type", args: [t, el] }); return { ok: true }; },
     scroll: async (d: string, amount?: number) => { calls.push({ method: "scroll", args: [d, amount] }); return { ok: true }; },
@@ -30,7 +30,10 @@ function fakeActor(credentialFillImpl?: (el: unknown) => Promise<{ ok: boolean; 
   };
 }
 
-const fakeBridge = () => ({ read: async () => ({ elements: [] }) });
+// The live tab url is origin binding's source of truth (see RunManager.bindLiveOrigin), so the
+// fake tab follows the fake actor's navigations exactly as a real browser does.
+let TAB_URL: string | undefined;
+const fakeBridge = () => ({ read: async () => ({ url: TAB_URL, elements: [] }) });
 const fakeAudit = () => { const recs: any[] = []; return { recs, append: (r: any) => recs.push(r) }; };
 
 // Two allowlisted domains so a navigate to "other.com" (used for the origin-mismatch test) is
