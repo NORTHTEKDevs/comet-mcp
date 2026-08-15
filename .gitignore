@@ -1,0 +1,19 @@
+﻿node_modules/
+dist/
+*.log
+.env
+.env.local
+.DS_Store
+tests/fixtures/*.local.json
+scripts/inspect-output.json
+scripts/*-output.json
+.worktrees
+audit.key
+audit.pub
+*.audit.jsonl
+# secrets - never commit
+relay/bridge.token
+extension/config.js
+*.token
+.comet-mcp/
+.env.*
