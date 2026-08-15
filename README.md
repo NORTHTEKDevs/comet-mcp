@@ -34,22 +34,36 @@ hash-chained, Ed25519-signed log.
 ## Quick start (the free-Perplexity path)
 
 ```bash
-# 1. build
-npm install && npm run build
-
-# 2. run the localhost relay + load the Comet Bridge extension
-#    (companion repo: NORTHTEKDevs/comet-bridge)
-
-# 3. register with Claude Code
-claude mcp add comet --scope user \
-  --env BRIDGE_URL="http://127.0.0.1:8787" \
-  --env BRIDGE_TOKEN="<your relay token>" \
-  --env NVIDIA_API_KEY="nvapi-..." \
-  -- node "/path/to/comet-mcp/dist/index.js"
+git clone https://github.com/NORTHTEKDevs/comet-mcp
+git clone https://github.com/NORTHTEKDevs/comet-bridge   # clone beside it
+cd comet-mcp && node scripts/setup.mjs --start-relay
 ```
+
+`setup.mjs` installs, builds, mints the relay token, writes the extension config, starts the relay,
+and prints the exact `claude mcp add …` line with your real paths and token filled in. It is
+idempotent - re-run it any time to reprint that command; it never overwrites an existing token.
+
+It then leaves you the two steps only a human can do:
+
+1. **Load the extension** - `comet://extensions` → Developer mode → **Load unpacked** →
+   select `comet-bridge/extension`
+2. **Paste the `claude mcp add` command** it printed, then restart Claude Code
 
 Then, from Claude: `comet_session_begin` → `comet_assistant_ask`, and you're researching through
 your own Perplexity subscription.
+
+<details><summary>Manual setup, if you'd rather</summary>
+
+```bash
+npm install && npm run build
+node ../comet-bridge/relay/server.js          # leave running
+claude mcp add comet --scope user \
+  --env BRIDGE_URL="http://127.0.0.1:8787" \
+  --env BRIDGE_TOKEN="<contents of comet-bridge/relay/bridge.token>" \
+  --env NVIDIA_API_KEY="nvapi-..." \
+  -- node "/absolute/path/to/comet-mcp/dist/index.js"
+```
+</details>
 
 ## How it's built
 
