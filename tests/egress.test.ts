@@ -56,6 +56,20 @@ describe("egress", () => {
       expect(r.reason).toBe("private data to non-allowlisted origin");
     });
 
+    // Regression: untrusted provenance with an EMPTY origins array (a bridge read whose payload
+    // carried no url, or a merged Assistant answer) used to report "not foreign" to every
+    // destination, silently disarming rule 3 for exactly the data we know least about.
+    it("rule 3: untrusted provenance with no known origins is foreign to any non-allowlisted origin", () => {
+      const req: EgressRequest = {
+        destination: "https://attacker.com/collect",
+        payload: "some page text",
+        provenance: { origins: [], trust: "untrusted" }
+      };
+      const r = checkEgress(policy, req);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toBe("private data to non-allowlisted origin");
+    });
+
     it("rule 4: blocks non-trivial (>=40 char) payload to a non-allowlisted origin even without foreign provenance", () => {
       const payload = "x".repeat(40);
       const req: EgressRequest = {
@@ -150,11 +164,54 @@ describe("egress", () => {
       ["double-encoded", "https://good.com/url?continue=http%253A%252F%252Fevil.com%252Fx"],
       ["encoded protocol-relative", "https://good.com/url?continue=%2F%2Fevil.com%2Fx"],
       ["in the fragment", "https://good.com/x#next=//evil.com/y"],
-      ["uppercase scheme", "https://good.com/url?continue=HTTP://EVIL.COM/x"]
+      ["uppercase scheme", "https://good.com/url?continue=HTTP://EVIL.COM/x"],
+      // WHATWG normalization regressions: a browser accepts "\" anywhere "/" is valid
+      // (backslash-solidus) and strips tab/CR/LF before it resolves a URL, so each of these
+      // NAVIGATES to evil.com even though the raw string never contains a scannable
+      // "//evil.com". Note a SINGLE leading backslash ("\evil.com") is deliberately absent:
+      // one solidus resolves as a same-origin RELATIVE PATH, not a cross-origin target, so
+      // treating it as a host would be a pure false-positive generator (ordinary Windows-path
+      // parameters would trip it). The vectors are the two-solidus backslash forms below.
+      ["double backslash protocol-relative", "https://good.com/url?continue=\\\\evil.com/x"],
+      ["backslash+solidus protocol-relative", "https://good.com/url?continue=\\/evil.com/x"],
+      ["backslash percent-encoded", "https://good.com/url?continue=%5C%5Cevil.com%2Fx"],
+      ["tab embedded in percent-encoded host", "https://good.com/url?continue=%2F%2Fev%09il.com%2Fx"],
+      ["CR embedded in percent-encoded host", "https://good.com/url?continue=%2F%2Fe%0Dvil.com%2Fx"]
     ])("blocks an embedded foreign origin (%s)", (_label, destination) => {
       const r = checkEgress(policy, { destination, payload, provenance });
       expect(r.allowed).toBe(false);
       expect(r.reason).toMatch(/embedded redirect target not allowlisted/);
+    });
+
+    // decodeRepeatedly used to stop at 3 iterations, so an embedded target encoded FOUR times
+    // never revealed a scannable "//" within the bound and sailed through. An iteration CEILING
+    // of any N is the same evasion primitive (each encode layer adds only ~8 chars, so depth 17
+    // evaded a 16-iteration cap in a ~174-char URL) - decoding is now true fixed-point under a
+    // length cap only, pinned here at depths far past any former ceiling.
+    it.each([4, 17, 20, 40])("blocks an embedded foreign origin encoded %ix (decode fixed point)", (depth) => {
+      const enc = (s: string): string => {
+        let out = s;
+        for (let i = 0; i < depth; i++) out = encodeURIComponent(out);
+        return out;
+      };
+      const destination = `https://good.com/url?continue=${enc("http://evil.com/x")}`;
+      const r = checkEgress(policy, { destination, payload, provenance });
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toMatch(/embedded redirect target not allowlisted/);
+    });
+
+    it("still allows a deeply-encoded ALLOWLISTED embedded target", () => {
+      const enc5 = (s: string): string => {
+        let out = s;
+        for (let i = 0; i < 5; i++) out = encodeURIComponent(out);
+        return out;
+      };
+      const r = checkEgress(policy, {
+        destination: `https://good.com/url?continue=${enc5("https://app.good.com/home")}`,
+        payload: "short note",
+        provenance
+      });
+      expect(r.allowed).toBe(true);
     });
 
     it("does not false-positive on a doubled path separator", () => {

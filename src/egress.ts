@@ -39,7 +39,12 @@ const SECRET_WORDS =
   "password|passwd|pwd|secret|token|api[_-]?key|apikey|credential|authorization|private[_-]?key|access[_-]?key";
 // Quotes are identifier characters here on purpose: JS/JSON config reads as `config["accessKey"]=`
 // and `"authorization": "..."`, and without them the run stops at the quote and the match is lost.
+// BOUNDED at 64: an unbounded greedy `*` before the keyword alternation makes the regex QUADRATIC
+// when no keyword exists (every split point of a long identifier run is retried at every start
+// position) - measured 62s on a 200KB keyword-free input, which matters because this runs over
+// full untruncated page text. Real compound identifiers are far shorter than 64 chars.
 const IDENT_CHAR = "[A-Za-z0-9_.\\[\\]\"'-]";
+const IDENT_RUN = `${IDENT_CHAR}{0,64}`;
 // The VALUE was `\S+`, which stops at the first space - so a multi-word passphrase
 // ("password: correct horse battery staple") had only its first word redacted and the rest leaked.
 // A quoted value is captured to its closing quote; an unquoted one captures up to 6 whitespace-
@@ -61,7 +66,7 @@ const VALUE_TOKEN = wrapTolerant("[^\\s,;!?]", "+");
 const VALUE_MORE = `(?:[ \\t]+[^\\s,;!?-][^\\s,;!?]*){0,5}`;
 const SECRET_VALUE = `(?:"[^"\\r\\n]*"|'[^'\\r\\n]*'|${VALUE_TOKEN}${VALUE_MORE})`;
 const ASSIGNMENT_RE = new RegExp(
-  `${IDENT_CHAR}*(?:${SECRET_WORDS})${IDENT_CHAR}*\\s*[:=]\\s*${SECRET_VALUE}`,
+  `${IDENT_RUN}(?:${SECRET_WORDS})${IDENT_RUN}\\s*[:=]\\s*${SECRET_VALUE}`,
   "i"
 );
 // Continuous run of base64/hex-charset characters, tolerant of a single wrap-induced line break.
@@ -171,18 +176,27 @@ function hostMatches(host: string, entry: string): boolean {
 const EMBEDDED_URL_RE = /(?:https?:)?\/\/[^\s"'<>&]+/gi;
 
 // An attacker can percent-encode the embedded URL ("http%3A%2F%2Fevil.com") - and double-encode it
-// - so the raw string never contains "//" at all. Decode to a fixed point (bounded) before
-// scanning. A malformed escape sequence makes decodeURIComponent throw; keep what we have and scan
-// that rather than skipping the check entirely.
+// - so the raw string never contains "//" at all. Decode to a fixed point before scanning. The
+// original implementation stopped after a FIXED 3 iterations, which was itself an evasion
+// primitive: a target encoded N times never revealed a scannable "//" within the bound - and an
+// iteration CEILING is the same primitive at any N (each encode layer adds only ~8 chars, so
+// depth 17 evaded a 16-iteration cap in a ~174-char URL; verified by probe). True fixed-point
+// iteration instead: percent-decoding SHRINKS monotonically, so the loop terminates on its own
+// and the only guard needed is the length ceiling (stop when the next decode would grow the
+// string past 3x its ORIGINAL length - deeply nested escapes expand multiplicatively, and the
+// cap keeps a pathological payload from turning this scan into a memory/CPU amplifier). A
+// malformed escape sequence makes decodeURIComponent throw; keep what we have and scan that
+// rather than skipping the check entirely.
 function decodeRepeatedly(s: string): string {
   let out = s;
-  for (let i = 0; i < 3; i++) {
+  const maxLen = s.length * 3;
+  for (;;) {
     let next: string;
     try { next = decodeURIComponent(out); } catch { return out; }
     if (next === out) return out;
+    if (next.length > maxLen) return out;
     out = next;
   }
-  return out;
 }
 
 // An allowlisted destination's own path/query/fragment can smuggle a second, non-allowlisted
@@ -193,7 +207,17 @@ function decodeRepeatedly(s: string): string {
 function embeddedForeignOrigin(destination: string, domainsAllow: string[]): string | null {
   let parsed: URL;
   try { parsed = new URL(destination); } catch { return null; }
-  const rest = decodeRepeatedly(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+  const decoded = decodeRepeatedly(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+  // WHATWG normalization before scanning. A browser treats "\" as "/" (backslash-solidus) and
+  // strips tab/CR/LF entirely before it resolves a URL, and real redirect services normalize
+  // their continue=/url= parameters the same way - so "\evil.com" or "//ev%09il.com" both
+  // NAVIGATE to evil.com while the raw decoded string contains no scannable "//evil.com". The
+  // tab case is the subtle one: a literal tab splits the EMBEDDED_URL_RE match ("\s" is in its
+  // negated class), so the regex sees "//ev" (host "ev", no dot -> skipped) plus an orphaned
+  // "il.com". Normalizing the DECODED string exactly as a resolver would closes all of these at
+  // once. Merging stripped characters can only ever create MORE host-shaped candidates, so the
+  // normalization errs fail-closed.
+  const rest = decoded.replace(/\\/g, "/").replace(/[\t\r\n]/g, "");
   for (const m of rest.match(EMBEDDED_URL_RE) ?? []) {
     // Protocol-relative targets still navigate cross-origin; give the parser a scheme to work with.
     const candidate = m.startsWith("//") ? `https:${m}` : m;

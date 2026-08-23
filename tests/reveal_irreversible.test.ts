@@ -31,8 +31,15 @@ function approvals() {
   return {
     list,
     find: (s: string, n: number, a?: string) =>
-      list.find(x => x.site === s && !x.used && x.expires_ms > n && (a === undefined || x.action === a)) ?? null,
-    consume: (id: string) => { const x = list.find(y => y.id === id); if (!x || x.used) return false; x.used = true; return true; }
+      list.find(x => x.site === s && !x.used && !x.reserved && x.expires_ms > n && (a === undefined || x.action === a)) ?? null,
+    reserve: (id: string) => {
+      const x = list.find(y => y.id === id);
+      if (!x || x.used || x.reserved || x.expires_ms <= 0) return false;
+      x.reserved = true;
+      return true;
+    },
+    consume: (id: string) => { const x = list.find(y => y.id === id); if (!x || x.used) return false; x.used = true; return true; },
+    release: (id: string) => { const x = list.find(y => y.id === id); if (x && !x.used) x.reserved = false; }
   };
 }
 

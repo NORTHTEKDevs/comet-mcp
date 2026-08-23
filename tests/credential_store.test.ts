@@ -1,7 +1,7 @@
 // Task 23: fixture-only tests. NEVER touch the real Comet vault or invoke real DPAPI - every
 // test here builds its own known key/plaintext/blob and its own throwaway SQLite file.
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, readdirSync, statSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes, createCipheriv } from "node:crypto";
@@ -222,7 +222,7 @@ describe("cometCredentialStore.read", () => {
     expect(cred).toBeNull();
   });
 
-  it("cleans up its temp copy of Login Data after a read", () => {
+  it("cleans up its temp copy of Login Data after a read", async () => {
     const dir = trackedDir();
     const key = randomBytes(32);
     mkdirSync(join(dir, "Default"), { recursive: true });
@@ -237,10 +237,74 @@ describe("cometCredentialStore.read", () => {
     const before = new Set(readdirSync(tmpdir()));
     const store = cometCredentialStore(dir, { masterKey: key });
     store.read("example.com");
-    const after = new Set(readdirSync(tmpdir()));
-    const added = [...after].filter(f => !before.has(f));
-    // Nothing new left behind in the OS temp dir once read() returns.
-    expect(added.filter(f => f.toLowerCase().includes("login"))).toEqual([]);
+    // Concurrency-tolerant assertion: the OS tmpdir is SHARED - a sibling suite (this repo keeps
+    // a .worktrees copy of this exact file) can hold its own comet-login-data temp copy open
+    // while this read runs, and the old strict before/after diff saw that in-flight file as
+    // "left behind" by us (a flake, not a leak). Poll briefly for foreign files to disappear;
+    // OUR own temp file is unlinked synchronously before read() returns, so it never appears at all.
+    const loginShaped = (): string[] => {
+      const now = new Set(readdirSync(tmpdir()));
+      return [...now].filter(f => !before.has(f)).filter(f => f.toLowerCase().includes("login"));
+    };
+    let leftovers = loginShaped();
+    for (let i = 0; i < 30 && leftovers.length > 0; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      leftovers = loginShaped();
+    }
+    expect(leftovers).toEqual([]);
+  });
+
+  // Crashed reads strand full vault copies as %TEMP%/comet-login-data-*.db forever. The store
+  // sweeps those stale leftovers (age-gated) on construction.
+  it("sweeps a stale comet-login-data temp copy left by a crashed read on construction", () => {
+    const stalePath = join(tmpdir(), `comet-login-data-${randomBytes(8).toString("hex")}.db`);
+    writeFileSync(stalePath, "stale leftover bytes");
+    try {
+      // Backdate well past the sweep's staleness threshold so a LIVE sibling read's fresh temp
+      // file is never a legitimate sweep target.
+      const past = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      utimesSync(stalePath, past, past);
+
+      const dir = trackedDir();
+      const key = randomBytes(32);
+      mkdirSync(join(dir, "Default"), { recursive: true });
+      makeLoginDataFile(join(dir, "Default"), [
+        {
+          origin_url: "https://example.com/login",
+          signon_realm: "https://example.com/",
+          username_value: "alice",
+          password_value: makeBlob(key, "hunter2")
+        }
+      ]);
+      cometCredentialStore(dir, { masterKey: key }); // construction performs the sweep
+
+      expect(existsSync(stalePath)).toBe(false);
+    } finally {
+      rmSync(stalePath, { force: true });
+    }
+  });
+
+  it("does NOT sweep a FRESH comet-login-data file that could belong to a live concurrent read", () => {
+    const freshPath = join(tmpdir(), `comet-login-data-${randomBytes(8).toString("hex")}.db`);
+    writeFileSync(freshPath, "in-flight copy of another process");
+    try {
+      const dir = trackedDir();
+      const key = randomBytes(32);
+      mkdirSync(join(dir, "Default"), { recursive: true });
+      makeLoginDataFile(join(dir, "Default"), [
+        {
+          origin_url: "https://example.com/login",
+          signon_realm: "https://example.com/",
+          username_value: "alice",
+          password_value: makeBlob(key, "hunter2")
+        }
+      ]);
+      cometCredentialStore(dir, { masterKey: key });
+      // Recent mtime -> plausibly a live concurrent reader's copy -> untouched.
+      expect(existsSync(freshPath)).toBe(true);
+    } finally {
+      rmSync(freshPath, { force: true });
+    }
   });
 
   it("copies Login Data before opening so the original is never mutated", () => {

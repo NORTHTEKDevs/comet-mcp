@@ -226,7 +226,12 @@ let runCounter = 0;
 // approval store: finds nothing, consumes nothing. checkCredentialFill's gate 3 then denies with
 // "no valid approval" exactly as it would for any other unreadable/absent approval store - never
 // allow on a "probably fine" just because a store was not wired up.
-const NO_APPROVALS: ApprovalStore = { find: () => null, consume: () => false };
+const NO_APPROVALS: ApprovalStore = {
+  find: () => null,
+  reserve: () => false,
+  consume: () => false,
+  release: () => {}
+};
 
 export class RunManager {
   private runs = new Map<string, RunEntry>();
@@ -659,6 +664,19 @@ export class RunManager {
     // an unattended run (no-op otherwise). See trackTripwire's doc comment.
     this.trackTripwire(run_id, true);
 
+    // Reserve-then-confirm (approval single-use race fix). gate 3's find() and the post-success
+    // consume() are separated by an AWAITED actor call, so two concurrent fills both passed gate
+    // 3 on one approval and the loser's consume() false was ignored - one human grant authorised
+    // two browser-touching ops. reserve() atomically flips the approval to "in flight" in one
+    // synchronous step BEFORE the actor call, so of N concurrent callers exactly N-1 deny here,
+    // having touched nothing. The reservation is rolled back if the browser op does not complete
+    // (actor threw or reported failure), preserving "a failed attempt never burns the grant".
+    const approvalId = credDecision.approvalId;
+    if (approvalId !== undefined && !this.store.reserve(approvalId, this.now())) {
+      this.record(run_id, "CREDENTIAL_FILL", { allowed: false, reason: "approval already in use or spent" }, site);
+      return denied("approval already in use or spent");
+    }
+
     // From here on both gates have passed and we are about to touch the live browser - the
     // single most dangerous action in the system. The actor call is wrapped in try/finally so
     // exactly one audit record is written for THIS attempt no matter what happens, including an
@@ -677,19 +695,40 @@ export class RunManager {
     // always runs before the exception propagates; there is nothing left to sanitize because
     // nothing error-derived is ever read.
     let fillResult: { ok: boolean; filled: boolean } | undefined;
+    // Threading the ACTUAL outcome into the finally's signed record: the confirm-fail path below
+    // returns a denial even though fillResult says filled=true - logging that as a signed
+    // policy_decision:"allow" would put two contradictory records in the tamper-evident log for
+    // one non-event.
+    let confirmFailed = false;
     try {
       fillResult = await this.actor.credentialFill(el);
-      if (fillResult.ok && fillResult.filled && credDecision.approvalId !== undefined) {
-        this.store.consume(credDecision.approvalId, this.now());
+      if (fillResult.ok && fillResult.filled) {
+        // Confirm step: check consume()'s return. A false here (expired mid-flight, consumed by
+        // an external writer) means no valid grant backs this fill anymore - deny rather than
+        // report success, and do NOT release (there is nothing restorable).
+        if (approvalId !== undefined && !this.store.consume(approvalId, this.now())) {
+          confirmFailed = true;
+          return denied("approval could not be confirmed");
+        }
+      } else if (approvalId !== undefined) {
+        // The fill did not complete - roll the reservation back so the single-use grant survives
+        // for a retry, exactly as an unconsumed approval behaved before reservations existed.
+        this.store.release(approvalId);
       }
       run.state = consume(run.state, actionRequest("CREDENTIAL_FILL"), undefined);
       return { ok: fillResult.ok, result: { filled: fillResult.filled } };
+    } catch (err) {
+      // Actor-level throw: the op never completed, so give the human's grant back before the
+      // error propagates (the finally below still writes the one audit record).
+      if (approvalId !== undefined) this.store.release(approvalId);
+      throw err;
     } finally {
       this.audit.append({
         ts: this.now(), run_id, actor: "agent", action: "CREDENTIAL_FILL",
-        target: site, policy_decision: fillResult ? "allow" : "error",
+        target: site,
+        policy_decision: fillResult ? (confirmFailed ? "deny" : "allow") : "error",
         reason: fillResult
-          ? `approval=${credDecision.approvalId ?? "unknown"} filled=${fillResult.filled}`
+          ? `approval=${credDecision.approvalId ?? "unknown"} filled=${fillResult.filled}${confirmFailed ? " confirmation_failed" : ""}`
           : `approval=${credDecision.approvalId ?? "unknown"} error=actor error`
       });
     }
@@ -765,6 +804,16 @@ export class RunManager {
     // an unattended run (no-op otherwise). See trackTripwire's doc comment.
     this.trackTripwire(run_id, true);
 
+    // Reserve-then-confirm, identical to credentialFill above: gate 3 and the post-success
+    // consume() are separated by an awaited actor.type() call, so reserve the approval
+    // synchronously BEFORE the actor call; deny a loser immediately; roll back when the op does
+    // not complete.
+    const approvalId = credDecision.approvalId;
+    if (approvalId !== undefined && !this.store.reserve(approvalId, this.now())) {
+      this.record(run_id, "CREDENTIAL_USE", { allowed: false, reason: "approval already in use or spent" }, target);
+      return denied("approval already in use or spent");
+    }
+
     // Unlike credentialFill's actor call (el.name/el.role only - never a secret), this call's
     // FIRST argument is the real decrypted password. credentialFill can safely let an actor-level
     // throw propagate unmodified to the caller because nothing it passed the actor was ever a
@@ -778,23 +827,32 @@ export class RunManager {
     // could contain the plaintext password - ever leaves this function. On an actor-level throw we
     // resolve to a fixed, sanitized denial instead of rethrowing the original error.
     let typeResult: { ok: boolean; verified?: boolean } | undefined;
+    // See credentialFill: the confirm-fail path denies but must not log a signed "allow".
+    let confirmFailed = false;
     try {
       try {
         typeResult = await this.actor.type(credential.password, el);
       } catch {
+        if (approvalId !== undefined) this.store.release(approvalId);
         return denied("credential use failed");
       }
-      if (typeResult.ok && credDecision.approvalId !== undefined) {
-        this.store.consume(credDecision.approvalId, this.now());
+      if (typeResult.ok) {
+        if (approvalId !== undefined && !this.store.consume(approvalId, this.now())) {
+          confirmFailed = true;
+          return denied("approval could not be confirmed");
+        }
+      } else if (approvalId !== undefined) {
+        this.store.release(approvalId);
       }
       run.state = consume(run.state, actionRequest("CREDENTIAL_USE"), undefined);
       return { ok: typeResult.ok, result: { used: typeResult.ok } };
     } finally {
       this.audit.append({
         ts: this.now(), run_id, actor: "agent", action: "CREDENTIAL_USE",
-        target, policy_decision: typeResult ? "allow" : "error",
+        target,
+        policy_decision: typeResult ? (confirmFailed ? "deny" : "allow") : "error",
         reason: typeResult
-          ? `approval=${credDecision.approvalId ?? "unknown"} used=${typeResult.ok}${irr.reason !== undefined ? ` ${irr.reason}` : ""}`
+          ? `approval=${credDecision.approvalId ?? "unknown"} used=${typeResult.ok}${confirmFailed ? " confirmation_failed" : ""}${irr.reason !== undefined ? ` ${irr.reason}` : ""}`
           : `approval=${credDecision.approvalId ?? "unknown"} error=actor error`
       });
     }
@@ -875,17 +933,30 @@ export class RunManager {
     // store.consume() itself throws (e.g. a disk I/O failure) after every gate already passed -
     // there is no actor call here to echo the value into a thrown error, so unlike credentialUse
     // this needs no catch, only the finally, purely for audit completeness.
+    // The confirm-fail path below returns a denial (via record(), which also trips the
+    // unattended tripwire) - the finally must not then write a signed policy_decision:"allow"
+    // for the same non-event. Thread the actual outcome through.
+    let revealOutcome: "allow" | "deny" = "allow";
     try {
-      if (credDecision.approvalId !== undefined) {
-        this.store.consume(credDecision.approvalId, this.now());
+      // Synchronous find->consume (no awaited actor call between them), so this path never had
+      // the concurrency window credentialFill/credentialUse needed reservations for - but the
+      // consume() return is now checked like everywhere else: a false means no valid grant backs
+      // this reveal (expired mid-gates, or consumed by an external writer) and the plaintext
+      // must NOT be returned.
+      if (credDecision.approvalId !== undefined && !this.store.consume(credDecision.approvalId, this.now())) {
+        revealOutcome = "deny";
+        const decision = { allowed: false, reason: "approval could not be confirmed" };
+        this.record(run_id, "CREDENTIAL_REVEAL", decision, site);
+        return denied(decision.reason);
       }
       run.state = consume(run.state, actionRequest("CREDENTIAL_REVEAL"), undefined);
       return { ok: true, result: { credential } };
     } finally {
       this.audit.append({
         ts: this.now(), run_id, actor: "agent", action: "CREDENTIAL_REVEAL",
-        target: site, policy_decision: "allow",
-        reason: `approval=${credDecision.approvalId ?? "unknown"}`
+        target: site,
+        policy_decision: revealOutcome,
+        reason: `approval=${credDecision.approvalId ?? "unknown"}${revealOutcome === "deny" ? " confirmation_failed" : ""}`
       });
     }
   }

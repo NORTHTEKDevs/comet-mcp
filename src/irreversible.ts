@@ -28,7 +28,15 @@ export interface IrreversiblePattern {
 export const IRREVERSIBLE_PATTERNS: readonly IrreversiblePattern[] = [
   {
     tag: "change-password",
-    patterns: [/change.?password/i, /reset.?password/i, /update.?password/i]
+    patterns: [
+      /change.?password/i, /reset.?password/i, /update.?password/i,
+      // Classifier-gap closure: a field named "New Password" / "Confirm Password" (or carrying
+      // the "new-password" autocomplete hint shape) IS a password-change context, but none of
+      // those shapes matched and the gate stayed silent for exactly the moment a password is
+      // being SET. The same `.?` separator discipline as the rest of the table covers
+      // "new-password", "new_password", "newPassword" and the spaced forms with one pattern.
+      /new.?password/i, /confirm.?password/i
+    ]
   },
   // Separators are `.?` throughout, NOT literal spaces. A literal-space pattern matches
   // "Delete account" but silently misses "delete-account", "delete_account" and "deleteAccount" -

@@ -8,7 +8,7 @@
 // unwrapMasterKey and cometCredentialStore are the production wiring: real DPAPI (via a
 // PowerShell shell-out) and a real SQLite copy-then-read of "Login Data". Unit tests inject a
 // known key directly into cometCredentialStore and never exercise unwrapMasterKey.
-import { readFileSync, copyFileSync, unlinkSync } from "node:fs";
+import { readFileSync, copyFileSync, unlinkSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes, createDecipheriv } from "node:crypto";
@@ -136,12 +136,44 @@ interface LoginRow {
   password_value: Uint8Array | null;
 }
 
+// A crashed read (process killed between copyFileSync and the finally-unlink) strands a FULL
+// vault copy as %TEMP%/comet-login-data-*.db forever - a plaintext-credential-bearing file
+// accumulating in a world-readable temp dir. The per-read finally cannot help a dead process, so
+// every store construction sweeps leftovers. Age-gated: a temp file belonging to a LIVE
+// concurrent read (a second comet-mcp instance, or test suites racing in one tmpdir) is seconds
+// old and must never be swept; on Windows an unlink of an open file would fail with EBUSY
+// anyway, but the age gate means we never even try. Anything matching the name shape AND older
+// than an hour is definitively a crash artifact - live reads never hold a copy that long.
+const STALE_TEMP_MIN_AGE_MS = 60 * 60 * 1000;
+
+function sweepStaleTempCopies(): void {
+  let names: string[];
+  try {
+    names = readdirSync(tmpdir());
+  } catch {
+    return; // unreadable temp dir - nothing to sweep, never throw from construction
+  }
+  for (const n of names) {
+    if (!/^comet-login-data-[0-9a-f]+\.db$/i.test(n)) continue;
+    const p = join(tmpdir(), n);
+    try {
+      if (Date.now() - statSync(p).mtimeMs < STALE_TEMP_MIN_AGE_MS) continue;
+      unlinkSync(p);
+    } catch {
+      // best-effort: already deleted by another instance, locked by a live reader, or an OS
+      // permission refusal - all fine, the next construction retries.
+    }
+  }
+}
+
 // Production wiring. `opts.masterKey`, if given, is used instead of unwrapMasterKey (test-only
 // injection point - unit tests must never hit the real DPAPI/PowerShell path).
 export function cometCredentialStore(
   profileDir: string,
   opts?: { masterKey?: Buffer }
 ): CredentialStore {
+  sweepStaleTempCopies();
+
   const localStatePath = join(profileDir, "Local State");
   const loginDataPath = join(profileDir, "Default", "Login Data");
   let cachedKey: Buffer | undefined = opts?.masterKey;
