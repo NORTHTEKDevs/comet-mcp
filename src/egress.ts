@@ -147,10 +147,20 @@ const PREFIX_TOKEN_RE = new RegExp(
   `(?:${CREDENTIAL_PREFIXES.map(escapeRegExp).join("|")})${wrapTolerant("[A-Za-z0-9+/=_.-]", "*")}`,
   "g"
 );
+// Whole PEM block (mirrors the extension twin's `pem` rule): applied before the prefix rule so
+// the block is removed as one unit instead of leaving readable "PRIVATE KEY-----" residue.
+const PEM_RE = /-----BEGIN[\s\S]*?-----END[^\n-]*-----/g;
 const ASSIGNMENT_RE_G = new RegExp(ASSIGNMENT_RE.source, "gi");
 
 export function redactCredentials(s: string): string {
-  let out = s.replace(PREFIX_TOKEN_RE, "[REDACTED]");
+  // Non-string input passes through rather than throwing - the extension twin coerces, and a
+  // thrown TypeError here would surface as tool-call failure for a shape bug (probe finding).
+  if (typeof s !== "string") return s;
+  // PEM blocks first: the prefix rule alone ("-----BEGIN" + token-shaped run) left readable
+  // residue like "OPENSSH PRIVATE KEY-----" between redactions; the extension twin removes the
+  // whole block and this now matches it.
+  let out = s.replace(PEM_RE, "[REDACTED]");
+  out = out.replace(PREFIX_TOKEN_RE, "[REDACTED]");
   out = out.replace(ASSIGNMENT_RE_G, "[REDACTED]");
   out = out.replace(CANDIDATE_TOKEN_RE, (m) => (isHighEntropyToken(m) ? "[REDACTED]" : m));
   out = out.replace(DIGIT_RUN_RE, (m) => (isNumericSecret(m) ? "[REDACTED]" : m));
@@ -184,15 +194,30 @@ const EMBEDDED_URL_RE = /(?:https?:)?\/\/[^\s"'<>&]+/gi;
 // iteration instead: percent-decoding SHRINKS monotonically, so the loop terminates on its own
 // and the only guard needed is the length ceiling (stop when the next decode would grow the
 // string past 3x its ORIGINAL length - deeply nested escapes expand multiplicatively, and the
-// cap keeps a pathological payload from turning this scan into a memory/CPU amplifier). A
-// malformed escape sequence makes decodeURIComponent throw; keep what we have and scan that
-// rather than skipping the check entirely.
+// cap keeps a pathological payload from turning this scan into a memory/CPU amplifier).
+//
+// Decoding must also be POISON-RESISTANT: one invalid escape anywhere ("%FF", or a %XX run that
+// decodes to invalid UTF-8) makes decodeURIComponent throw for the WHOLE string, which used to
+// abort the entire decode chain on iteration 1 - leaving deeper-encoded smuggles behind the
+// poison unscanned ("?junk=%FF&u=%252F%252Fevil.com" sailed through; verified by probe). So each
+// pass decodes escape RUNS individually and leaves undecodable bytes literal: the poison survives
+// but never blocks decoding of the rest of the string.
+function resilientDecodePass(s: string): string {
+  return s.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    try { return decodeURIComponent(run); } catch { /* fall through to per-escape */ }
+    let out = "";
+    for (const esc of run.match(/%[0-9A-Fa-f]{2}/g) ?? []) {
+      try { out += decodeURIComponent(esc); } catch { out += esc; }
+    }
+    return out;
+  });
+}
+
 function decodeRepeatedly(s: string): string {
   let out = s;
   const maxLen = s.length * 3;
   for (;;) {
-    let next: string;
-    try { next = decodeURIComponent(out); } catch { return out; }
+    const next = resilientDecodePass(out);
     if (next === out) return out;
     if (next.length > maxLen) return out;
     out = next;
@@ -231,12 +256,27 @@ function embeddedForeignOrigin(destination: string, domainsAllow: string[]): str
 }
 
 export function checkEgress(policy: Policy, req: EgressRequest): EgressDecision {
+  // Rule 0: fail closed on malformed inputs instead of throwing. A caller that maps a thrown
+  // TypeError to "allow" (or simply crashes mid-run) must never be able to turn a shape bug
+  // into an open gate - every malformed field denies. Verified by probe: missing provenance
+  // only crashed on NON-allowlisted destinations, i.e. the crash was short-circuit-dependent.
+  if (!policy || !Array.isArray(policy.domains_allow)) {
+    return { allowed: false, reason: "malformed policy" };
+  }
+  if (!req || typeof req.destination !== "string") {
+    return { allowed: false, reason: "malformed egress request" };
+  }
+  const payload = typeof req.payload === "string" ? req.payload : "";
+  const provenance = req.provenance && Array.isArray(req.provenance.origins)
+    ? req.provenance
+    : { origins: [], trust: "untrusted" as const };
+
   // Rule 1: fail closed on an unparseable destination - never pass through.
   const destHost = originOf(req.destination);
   if (!destHost) return { allowed: false, reason: "unparseable egress destination" };
 
   // Rule 2: credential-shaped payloads are blocked regardless of destination.
-  if (looksLikeCredential(req.payload)) {
+  if (looksLikeCredential(payload)) {
     return { allowed: false, reason: "credential-shaped payload" };
   }
 
@@ -255,13 +295,13 @@ export function checkEgress(policy: Policy, req: EgressRequest): EgressDecision 
   }
 
   // Rule 3: private (foreign-provenance) data may not egress to a non-allowlisted origin.
-  if (!allowlisted && isForeignTo(req.provenance, destHost)) {
+  if (!allowlisted && isForeignTo(provenance, destHost)) {
     return { allowed: false, reason: "private data to non-allowlisted origin" };
   }
 
   // Rule 4: non-trivial payloads to a non-allowlisted origin are blocked even without
   // foreign provenance (generic exfil-size guard).
-  if (!allowlisted && req.payload.length >= 40) {
+  if (!allowlisted && payload.length >= 40) {
     return { allowed: false, reason: "data to non-allowlisted origin" };
   }
 
