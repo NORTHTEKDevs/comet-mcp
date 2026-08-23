@@ -39,6 +39,10 @@ export function merge(a: Provenance, b: Provenance): Provenance {
 // origins ({origins:[],trust:"trusted"} - tagTrusted, the operator's own run) stays non-foreign:
 // that shape means "no page-derived data at all", not "unknown page-derived data".
 export function isForeignTo(p: Provenance, destinationOrigin: string): boolean {
+  // Malformed provenance (null, missing origins array - possible from an untyped caller) is
+  // foreign EVERYWHERE: we cannot vouch for data whose source metadata is broken, so egress
+  // rule 3 must deny rather than the caller's TypeError-to-allow mapping fail open.
+  if (!p || !Array.isArray(p.origins)) return true;
   if (p.trust === "untrusted" && p.origins.length === 0) return true;
   return p.origins.some(o => o !== destinationOrigin);
 }

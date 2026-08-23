@@ -20,10 +20,12 @@ const MAX_SCROLL_AMOUNT = 100_000;
 // accepted and could match hostMatches' suffix logic - an allowlist entry that matches nothing
 // real is useless at best and a silent misconfiguration at worst. Also rejected: entries with
 // leading/trailing whitespace (" example.com ") - they pass a trim()-based emptiness check but
-// are stored untrimmed and can then NEVER host-match, a silent dead allowlist entry.
+// are stored untrimmed and can then NEVER host-match, a silent dead allowlist entry - and
+// wildcard/leading-dot/port forms ("*.example.com", ".example.com", "example.com:8443"):
+// hostMatches does exact-or-suffix matching only, so each of those silently matches nothing.
 const DOMAIN_ENTRY = z.string().refine(
-  s => s.trim().length > 0 && s === s.trim(),
-  "domain entries must be non-empty and contain no leading/trailing whitespace"
+  s => s.trim().length > 0 && s === s.trim() && !/^[.*]/.test(s) && !s.includes(":") && !s.includes("*"),
+  "domain entries must be bare hostnames (no whitespace, wildcards, leading dots, or ports)"
 );
 
 // The action kinds a session may ever request. This deliberately excludes the unimplemented

@@ -34,6 +34,21 @@ describe("egress", () => {
       expect(r.reason).toBe("unparseable egress destination");
     });
 
+    // Rule 0 (probe finding HIGH-2): malformed shapes must DENY, never throw - a caller that
+    // maps a thrown TypeError to allow would otherwise fail open on exactly the inputs it
+    // understands least.
+    it.each([
+      ["missing provenance", () => checkEgress(policy, { destination: "https://attacker.net/x", payload: "ok" } as unknown as EgressRequest)],
+      ["null policy", () => checkEgress(null as never, { destination: "https://example.com/x", payload: "ok", provenance: trustedNoOrigin })],
+      ["policy without domains_allow array", () => checkEgress({} as never, { destination: "https://example.com/x", payload: "ok", provenance: trustedNoOrigin })],
+      ["null payload", () => checkEgress(policy, { destination: "https://attacker.net/x", payload: null as never, provenance: untrustedFrom("good.com") })],
+      ["non-string destination", () => checkEgress(policy, { destination: 42 as never, payload: "ok", provenance: trustedNoOrigin })]
+    ])("rule 0: fails closed on %s (returns deny, does not throw)", (_label, call) => {
+      let decision: { allowed: boolean };
+      expect(() => { decision = call(); }).not.toThrow();
+      expect(decision!.allowed).toBe(false);
+    });
+
     it("rule 2: blocks a credential-shaped payload regardless of destination, even to an allowlisted origin", () => {
       const req: EgressRequest = {
         destination: "https://good.com/api",
@@ -212,6 +227,20 @@ describe("egress", () => {
         provenance
       });
       expect(r.allowed).toBe(true);
+    });
+
+    // Probe finding HIGH-1: one invalid escape ("%FF") used to throw inside decodeURIComponent
+    // and abort the ENTIRE decode chain on iteration 1, leaving a deeper-encoded smuggle behind
+    // the poison completely unscanned. Decoding is now poison-resistant: undecodable bytes stay
+    // literal, everything else keeps decoding.
+    it("blocks a smuggle hidden behind an invalid escape (decode poisoning)", () => {
+      const r = checkEgress(policy, {
+        destination: "https://good.com/r?junk=%FF&u=%252F%252Fevil.com",
+        payload: "ok",
+        provenance
+      });
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toMatch(/embedded redirect target not allowlisted/);
     });
 
     it("does not false-positive on a doubled path separator", () => {
