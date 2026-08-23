@@ -15,8 +15,13 @@ const PAGE_CONTENT_OFFSET_Y = 300;
 // vision-extract), since Comet page/sidebar CONTENT is invisible to UIA (see the plan's
 // live-verified facts block) and there is no named "answer container" element to read by
 // accessible name.
-const VISION_PROVIDER = (process.env.COMET_VISION_PROVIDER ?? "anthropic").toLowerCase();
-const extract_from_screenshot = VISION_PROVIDER === "nvidia" ? nvidia_extract : anthropic_extract;
+// Read at CALL time (see comet_driver.ts): a module-load snapshot silently ignored env vars set
+// after import.
+function extractor() {
+  return (process.env.COMET_VISION_PROVIDER ?? "anthropic").toLowerCase() === "nvidia"
+    ? nvidia_extract
+    : anthropic_extract;
+}
 
 // Task 38 (Phase 6): live-verified 2026-08-14 (Step 0 of the Task 38 spec) against the real,
 // running Comet browser via ghost_snapshot({actionable_only:true}) on a focused Comet window:
@@ -148,6 +153,23 @@ export class CometActor {
     }
 
     const { attempts, retryMs, cycles } = navTuning();
+    // Substring containment against the bare HOST is weak: an omnibox value like
+    // "https://evil.example/?ref=example.com" satisfies it while the tab is somewhere else
+    // entirely. Where the target URL carries a path/query, assert on that full tail instead -
+    // a query-string echo of the host cannot reproduce "host/path?query". Root URLs keep the
+    // bare-host check because Chromium's omnibox hides the trailing slash on roots.
+    let needle = host;
+    try {
+      const target = new URL(url);
+      const tail = `${target.pathname}${target.search}`;
+      if (tail && tail !== "/") {
+        // Chromium's omnibox DISPLAYS a decoded form ("%20" -> space), so compare against the
+        // decoded tail; keep the encoded form if the tail contains malformed escapes.
+        let compareTail = tail;
+        try { compareTail = decodeURIComponent(tail); } catch { /* keep encoded */ }
+        needle = `${host}${compareTail}`;
+      }
+    } catch { /* unparseable: keep the bare-host needle */ }
     let lastErr = "";
     for (let cycle = 0; cycle < cycles; cycle++) {
       try { await this.g.focus_window(window); } catch { /* best effort - verification is the gate */ }
@@ -155,7 +177,7 @@ export class CometActor {
 
       for (let attempt = 0; attempt < attempts; attempt++) {
         try {
-          await this.g.assert({ predicate: "value-contains", name: "Address and search bar", role: "edit", text: host });
+          await this.g.assert({ predicate: "value-contains", name: "Address and search bar", role: "edit", text: needle });
           return { ok: true, landed: true };
         } catch (err) {
           lastErr = (err as Error).message;
@@ -234,7 +256,7 @@ export class CometActor {
       timeout_ms: timeoutMs,
       initial_delay_ms: ASSISTANT_STABILITY_INITIAL_DELAY_MS
     });
-    const result = await extract_from_screenshot(stab.jpeg_base64, query);
+    const result = await extractor()(stab.jpeg_base64, query);
     return { answer: result.answer };
   }
 

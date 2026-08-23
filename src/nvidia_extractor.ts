@@ -2,6 +2,12 @@ import { parse_vision_json, type ExtractResult } from "./vision_extractor.js";
 
 const NVIDIA_MODEL = process.env.COMET_NVIDIA_MODEL ?? "meta/llama-3.2-90b-vision-instruct";
 const NVIDIA_ENDPOINT = process.env.NVIDIA_API_BASE ?? "https://integrate.api.nvidia.com/v1/chat/completions";
+// Hard per-request deadline: without an AbortSignal a stalled NVIDIA endpoint blocks for undici's
+// ~5min-per-phase defaults, far past any caller's poll deadline (which only checks BETWEEN
+// requests). Overridable for slow vision models.
+const NVIDIA_TIMEOUT_MS = Number.isFinite(Number(process.env.COMET_NVIDIA_TIMEOUT_MS))
+  && Number(process.env.COMET_NVIDIA_TIMEOUT_MS) > 0
+  ? Number(process.env.COMET_NVIDIA_TIMEOUT_MS) : 120_000;
 
 const SYSTEM_PROMPT = `You are extracting structured data from a screenshot of Perplexity Comet's answer page.
 
@@ -40,7 +46,8 @@ export async function extract_from_screenshot(jpeg_base64: string, query: string
       "Accept": "application/json",
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(NVIDIA_TIMEOUT_MS)
   });
 
   if (!resp.ok) {

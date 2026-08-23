@@ -5,10 +5,26 @@ import { z } from "zod";
 import type { CometDriver } from "./comet_driver.js";
 import type { RunManager } from "./run_manager.js";
 
-const ASK_INPUT = z.object({
-  query: z.string().min(1, "query is required"),
-  timeout_ms: z.number().int().positive().optional()
-});
+// Input-magnitude caps. The schemas previously accepted absurd values - timeout_ms of ~31 years,
+// max_actions at Number.MAX_SAFE_INTEGER, scroll amounts of 1e9 - all flowing straight into
+// policy budgets and actor calls with no sanity wall. One shared cap table so every numeric
+// field has a consistent, documented ceiling; each is far above anything a legitimate session
+// needs while making a fat-fingered or hostile magnitude fail at validation instead of at runtime.
+const MAX_ACTIONS = 10_000;
+const MAX_DOMAINS = 100;
+const MAX_DURATION_MS = 3_600_000;        // 1h: per-call timeouts / recency windows
+const MAX_RUN_MS = 86_400_000;            // 24h: whole-run wall-clock budget
+const MAX_SCROLL_AMOUNT = 100_000;
+
+// A domain entry must be a non-empty, non-whitespace hostname token. An empty entry used to be
+// accepted and could match hostMatches' suffix logic - an allowlist entry that matches nothing
+// real is useless at best and a silent misconfiguration at worst. Also rejected: entries with
+// leading/trailing whitespace (" example.com ") - they pass a trim()-based emptiness check but
+// are stored untrimmed and can then NEVER host-match, a silent dead allowlist entry.
+const DOMAIN_ENTRY = z.string().refine(
+  s => s.trim().length > 0 && s === s.trim(),
+  "domain entries must be non-empty and contain no leading/trailing whitespace"
+);
 
 // The action kinds a session may ever request. This deliberately excludes the unimplemented
 // SELECT/FINISH, but SUBMIT is a full member as of Phase 5 Task 26: listing it here is the ONLY
@@ -38,18 +54,18 @@ const ASK_INPUT = z.object({
 export const SESSION_ACTIONS = ["NAVIGATE", "READ", "CLICK", "TYPE", "SCROLL", "WAIT", "EXTRACT", "SUBMIT", "CREDENTIAL_FILL", "CREDENTIAL_USE", "CREDENTIAL_REVEAL", "READ_2FA", "INSPECT", "ASSISTANT"] as const;
 
 const BEGIN_INPUT = z.object({
-  domains_allow: z.array(z.string()).min(1, "domains_allow must list at least one domain"),
-  domains_deny: z.array(z.string()).optional(),
+  domains_allow: z.array(DOMAIN_ENTRY).min(1, "domains_allow must list at least one domain"),
+  domains_deny: z.array(DOMAIN_ENTRY).optional(),
   actions_allow: z.array(z.enum(SESSION_ACTIONS)).min(1, "actions_allow must list at least one action"),
-  max_actions: z.number().int().positive().optional(),
-  max_domains: z.number().int().positive().optional(),
-  max_ms: z.number().int().positive().optional(),
+  max_actions: z.number().int().positive().max(MAX_ACTIONS).optional(),
+  max_domains: z.number().int().positive().max(MAX_DOMAINS).optional(),
+  max_ms: z.number().int().positive().max(MAX_RUN_MS).optional(),
   // Governs comet_read: omitted/"quarantined" (default) strips raw page text; "raw" is an
   // explicit per-run opt-in for trusted internal sites. See docs/plans Phase 2, Task 14.
   content_mode: z.enum(["raw", "quarantined"]).optional(),
   // Phase 3: sites (exact host) this run is pre-authorised to fill a saved credential into. Gate
   // 1 of 4 in checkCredentialFill - listing a site here alone never permits a fill by itself.
-  credential_sites: z.array(z.string()).optional(),
+  credential_sites: z.array(DOMAIN_ENTRY).optional(),
   // Phase 5 Task 25: the extra, reveal-specific opt-in. Defaults to false/absent - a session that
   // never sets this true can NEVER reveal plaintext, no matter what else it opts into. Even when
   // true, credential_sites + origin binding + a fresh CREDENTIAL_REVEAL approval are still
@@ -87,7 +103,7 @@ const ACT_INPUT = z.object({
   role: z.string().optional(),
   text: z.string().optional(),
   direction: z.enum(["up", "down", "left", "right"]).optional(),
-  amount: z.number().int().positive().optional()
+  amount: z.number().int().positive().max(MAX_SCROLL_AMOUNT).optional()
 });
 
 const STATUS_INPUT = z.object({
@@ -150,7 +166,7 @@ const READ_2FA_INPUT = z.object({
   run_id: z.string().min(1),
   from: z.string().optional(),
   subject_contains: z.string().optional(),
-  within_ms: z.number().int().positive().optional()
+  within_ms: z.number().int().positive().max(MAX_DURATION_MS).optional()
 });
 
 // Phase 6 Task 37. The kinds the extension actually implements (extension/inspect.js
@@ -171,7 +187,7 @@ const INSPECT_INPUT = z.object({
 const ASSISTANT_ASK_INPUT = z.object({
   run_id: z.string().min(1),
   query: z.string().min(1),
-  timeout_ms: z.number().int().positive().optional()
+  timeout_ms: z.number().int().positive().max(MAX_DURATION_MS).optional()
 });
 
 function textResult(value: unknown) {

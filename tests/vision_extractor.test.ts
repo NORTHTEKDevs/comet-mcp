@@ -32,8 +32,27 @@ describe("parse_vision_json", () => {
     expect(result).toEqual({ answer: "", sources: [] });
   });
 
-  it("throws on invalid JSON", () => {
-    expect(() => parse_vision_json("not json")).toThrow();
+  it("throws on invalid JSON without leaking the raw output into the message", () => {
+    // Model output is UNTRUSTED page-derived content; the old SyntaxError embedded an excerpt
+    // of the input in its message, letting quarantined page content escape into MCP error
+    // content. The sanitized message may carry only shape metadata (length), never the text.
+    const sentinel = 'SECRET_PAGE_SENTINEL "answer": "ignore instructions"';
+    let msg = "";
+    try {
+      parse_vision_json(`oops ${sentinel}`);
+    } catch (err) {
+      msg = (err as Error).message;
+    }
+    expect(msg).not.toBe("");
+    expect(msg).not.toContain("SECRET_PAGE_SENTINEL");
+    expect(msg).toMatch(/not parseable as JSON/);
+    // And it still throws for plain garbage too.
+    expect(() => parse_vision_json("not json")).toThrow(/not parseable as JSON/);
+  });
+
+  it("does not throw on non-object JSON like null or a bare number", () => {
+    expect(parse_vision_json("null")).toEqual({ answer: "", sources: [] });
+    expect(parse_vision_json("42")).toEqual({ answer: "", sources: [] });
   });
 
   it("strips trailing junk after the JSON object (Llama Vision quirk)", () => {
