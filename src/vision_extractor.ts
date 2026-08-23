@@ -82,7 +82,18 @@ export function parse_vision_json(text: string): ExtractResult {
       }
     }
   }
-  const parsed = JSON.parse(cleaned);
+  // Never interpolate the raw model output into the error message: it is transcribed
+  // screen/page content (untrusted), and the SDK surfaces err.message as isError tool content,
+  // which would let page content escape the quarantined path content_mode exists to enforce.
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error(`vision output not parseable as JSON (${cleaned.length} chars)`);
+  }
+  // Valid JSON that is not an object (null, a bare number/string) yields the empty result
+  // rather than a TypeError on property access.
+  if (parsed === null || typeof parsed !== "object") return { answer: "", sources: [] };
   return {
     answer: typeof parsed.answer === "string" ? parsed.answer : "",
     sources: Array.isArray(parsed.sources)

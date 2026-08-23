@@ -39,7 +39,10 @@ export class BridgeClient {
     const r = await fetch(`${this.base}/jobs`, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify(job)
+      body: JSON.stringify(job),
+      // A stalled relay must not block past a sane dispatch window - the poll loop's deadline
+      // only bounds the RESULT wait, not this initial POST.
+      signal: AbortSignal.timeout(15_000)
     });
     const body = await readJsonBody(r, "dispatch");
     if (r.status !== 201) {
@@ -55,7 +58,14 @@ export class BridgeClient {
   async result(id: string, opts: BridgePollOpts): Promise<unknown> {
     const deadline = Date.now() + opts.timeoutMs;
     while (Date.now() < deadline) {
-      const r = await fetch(`${this.base}/jobs/${id}`, { headers: this.headers() });
+      // Each individual poll is bounded by the REMAINING budget (capped at 10s): a stalled HTTP
+      // response otherwise blocks for undici's multi-minute defaults while the loop's own
+      // deadline check never gets a chance to run.
+      const remaining = deadline - Date.now();
+      const r = await fetch(`${this.base}/jobs/${id}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(Math.min(remaining, 10_000))
+      });
       const body = await readJsonBody(r, `poll job ${id}`);
       if (r.status !== 200) {
         throw new Error(`bridge poll job ${id} failed: ${r.status} ${JSON.stringify(body)}`);

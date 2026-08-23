@@ -31,8 +31,22 @@ export class AuditLog {
     if (!existsSync(this.path)) return GENESIS;
     const txt = readFileSync(this.path, "utf8").trimEnd();
     if (!txt) return GENESIS;
-    const last = txt.split("\n").pop()!;
-    return (JSON.parse(last) as ChainLine).hash;
+    // Walk BACKWARD to the last line that parses as a chain line. A crash mid-append leaves a
+    // torn FINAL line whose JSON.parse used to throw here - which made every future append (and
+    // therefore the whole control plane, via RunManager's bare append calls) throw forever. A
+    // torn tail is a crash artifact, not tampering: tamper detection is hash-based and happens
+    // in verifyLog. The new record chains from the last INTACT hash; append() keeps the torn
+    // fragment on its own line so it is never silently rewritten.
+    const lines = txt.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const parsed = JSON.parse(lines[i]!) as ChainLine;
+        if (typeof parsed.hash === "string") return parsed.hash;
+      } catch {
+        // not a complete line - keep walking backward
+      }
+    }
+    return GENESIS;
   }
   append(rec: AuditRecord): void {
     // Re-reads the last line from disk on every call (rather than caching the tail in memory) so
@@ -44,7 +58,15 @@ export class AuditLog {
     const hash = hashOf(prev, rec);
     const sig = edSign(null, Buffer.from(hash, "hex"), this.key).toString("base64");
     const line: ChainLine = { rec, prev, hash, sig };
-    appendFileSync(this.path, JSON.stringify(line) + "\n");
+    // If the file does not end with a newline it has a torn final line (crash mid-append).
+    // Prefix a newline so the new record lands on its OWN line chained from the last intact
+    // hash - appending bare would fuse the new JSON into the torn fragment, corrupting both.
+    let prefix = "";
+    if (existsSync(this.path)) {
+      const buf = readFileSync(this.path);
+      if (buf.length > 0 && buf[buf.length - 1] !== 0x0a) prefix = "\n";
+    }
+    appendFileSync(this.path, prefix + JSON.stringify(line) + "\n");
   }
 }
 
@@ -57,7 +79,15 @@ export function verifyLog(path: string, publicPem: string): { ok: boolean; count
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
     if (raw === undefined) return { ok: false, count: lines.length, brokenAt: i };
-    const line = JSON.parse(raw) as ChainLine;
+    // A torn line (crash mid-append) is reported as a break at its index, never thrown: verify
+    // must stay able to ANSWER "is this log intact?" - "no, broken at N" is the answer, an
+    // exception is not.
+    let line: ChainLine;
+    try {
+      line = JSON.parse(raw) as ChainLine;
+    } catch {
+      return { ok: false, count: lines.length, brokenAt: i };
+    }
     if (line.prev !== prev) return { ok: false, count: lines.length, brokenAt: i };
     if (hashOf(prev, line.rec) !== line.hash) return { ok: false, count: lines.length, brokenAt: i };
     if (!edVerify(null, Buffer.from(line.hash, "hex"), pub, Buffer.from(line.sig, "base64")))

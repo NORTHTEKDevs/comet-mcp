@@ -23,9 +23,19 @@ export async function findOrLaunchComet(g: GhostTools): Promise<GhostWindow> {
   throw new Error(`Comet did not appear within ${LAUNCH_MAX_MS}ms after launch (${COMET_EXE})`);
 }
 
+// Title-substring matching alone is dangerous: a VS Code window titled
+// "comet_driver.ts - comet-mcp - Visual Studio Code" matches /comet/i, and every actor op would
+// then focus+type into the EDITOR. So: prefer the real browser title shape ("... - Comet"),
+// and never return an obvious non-browser app window even if nothing better exists.
+const NON_BROWSER_TITLE = /visual studio code|windows terminal|powershell|command prompt|cmd\.exe|node\.js|npm|vitest/i;
 async function find_comet(g: GhostTools): Promise<GhostWindow | null> {
   const { windows } = await g.list_windows();
-  return windows.find((w) => /comet|perplexity/i.test(w.name)) ?? null;
+  const candidates = windows.filter((w) => /comet|perplexity/i.test(w.name));
+  // Comet's own window title ends in " - Comet" (Chromium convention) - that is the unambiguous
+  // match; fall back to any candidate that is not an obvious dev-tool window.
+  return candidates.find((w) => / - comet$/i.test(w.name))
+    ?? candidates.find((w) => !NON_BROWSER_TITLE.test(w.name))
+    ?? null;
 }
 
 function sleep(ms: number): Promise<void> {

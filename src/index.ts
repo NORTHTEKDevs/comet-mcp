@@ -35,6 +35,15 @@ const COMET_PROFILE_DIR = process.env.COMET_PROFILE_DIR
 
 async function main() {
   const ghost_client = spawn_ghost(GHOST_EXE);
+  // Lifecycle teardown: ghost-mcp.exe is a native process holding SendInput/screenshot
+  // capability over the desktop - if this server dies it must die too, or an orphaned automation
+  // process outlives its controller. 'exit' fires on normal shutdown AND process.exit paths;
+  // SIGINT/SIGTERM get an explicit handler because Windows console close does not always run
+  // 'exit' handlers for spawned children otherwise.
+  const killGhost = () => { try { ghost_client.kill(); } catch { /* already dead */ } };
+  process.on("exit", killGhost);
+  process.on("SIGINT", () => { killGhost(); process.exit(130); });
+  process.on("SIGTERM", () => { killGhost(); process.exit(143); });
   // Run MCP initialize handshake on the child once.
   await ghost_client.call("initialize", {
     protocolVersion: "2024-11-05",
