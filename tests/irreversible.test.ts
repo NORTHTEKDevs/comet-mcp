@@ -82,6 +82,20 @@ describe("classifyAction (Task 31)", () => {
     expect(classifyAction("CLICK", "Delete Account", undefined)).toBe("delete");
   });
 
+  // Classifier-gap regression: a password field named "New Password" / "Confirm Password" (or
+  // its autofill hint "new-password") is a change-password context just as much as "Change
+  // Password" is, but none of those shapes matched any pattern and the gate stayed silent.
+  it.each([
+    ["New Password"],
+    ["Confirm Password"],
+    ["new-password"],
+    ["new_password"],
+    ["NewPassword"],
+    ["confirm new password"]
+  ])("matches password-field naming variants to the change-password tag (%s)", (target) => {
+    expect(classifyAction("TYPE", target, undefined)).toBe("change-password");
+  });
+
   it("ordinary actions return null", () => {
     for (const target of ["Save", "Submit", "Cancel", "Next", "Search", "Close", "up", "down"]) {
       expect(classifyAction("CLICK", target, "app.example.com")).toBeNull();

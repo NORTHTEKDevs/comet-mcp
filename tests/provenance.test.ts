@@ -82,5 +82,26 @@ describe("provenance", () => {
       const p: Provenance = { origins: ["good.com", "evil.com"], trust: "untrusted" };
       expect(isForeignTo(p, "good.com")).toBe(true);
     });
+
+    // Regression: isForeignTo used to look ONLY at origins, so untrusted data with no known
+    // origin ({origins:[], trust:"untrusted"} - exactly what pageProvenanceOf/shapeAssistantResult
+    // produce when a bridge payload carries no url) reported "not foreign" to EVERY destination.
+    // Untrusted means we cannot vouch for where the data came from, so it must be treated as
+    // foreign everywhere unless every recorded origin equals the destination.
+    it("is foreign when untrusted with NO origins (fail-closed)", () => {
+      const p: Provenance = { origins: [], trust: "untrusted" };
+      expect(isForeignTo(p, "good.com")).toBe(true);
+    });
+
+    it("stays non-foreign when trusted with no origins (the operator's own run)", () => {
+      const p: Provenance = { origins: [], trust: "trusted" };
+      expect(isForeignTo(p, "good.com")).toBe(false);
+    });
+
+    it("is non-foreign only when untrusted origins are non-empty AND all equal the destination", () => {
+      expect(isForeignTo({ origins: ["good.com"], trust: "untrusted" }, "good.com")).toBe(false);
+      expect(isForeignTo({ origins: ["good.com", "good.com"], trust: "untrusted" }, "good.com")).toBe(false);
+      expect(isForeignTo({ origins: ["good.com"], trust: "untrusted" }, "other.com")).toBe(true);
+    });
   });
 });

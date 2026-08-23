@@ -30,6 +30,15 @@ export function merge(a: Provenance, b: Provenance): Provenance {
   return { origins, trust };
 }
 
+// Trust-aware foreignness. The origins-only rule below is kept for every case with a known
+// origin, but an UNTRUSTED payload with an EMPTY origins array used to report "not foreign" to
+// every destination - which silently disarmed egress rule 3 for exactly the data we know the
+// LEAST about (a bridge read whose payload carried no url, a merged Assistant answer). Untrusted
+// means we cannot vouch for where the data came from, so it is foreign EVERYWHERE unless it has
+// a non-empty origins array whose members ALL equal the destination. Trusted provenance with no
+// origins ({origins:[],trust:"trusted"} - tagTrusted, the operator's own run) stays non-foreign:
+// that shape means "no page-derived data at all", not "unknown page-derived data".
 export function isForeignTo(p: Provenance, destinationOrigin: string): boolean {
+  if (p.trust === "untrusted" && p.origins.length === 0) return true;
   return p.origins.some(o => o !== destinationOrigin);
 }

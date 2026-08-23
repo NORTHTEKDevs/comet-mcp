@@ -15,17 +15,35 @@ export interface Approval {
   action: ApprovalAction;
   expires_ms: number;
   used: boolean;
+  // In-flight marker for the reserve-then-confirm discipline (RunManager's credential paths).
+  // Optional so every pre-existing approval file on disk stays valid: an absent field reads as
+  // "not reserved". A reserved approval is NOT findable - that is the whole point: it closes the
+  // window in which two concurrent callers could both pass gate 3 on one single-use grant.
+  reserved?: boolean;
 }
 
 export interface ApprovalStore {
-  // Fresh, unused, unexpired, matching site (exact host match, not suffix). When `action` is
-  // given, also requires an exact action match - omitting it preserves the pre-Phase-5 behaviour
-  // (match any action), which is only safe because every pre-Phase-5 approval on disk is
-  // CREDENTIAL_FILL; every Phase 5 caller MUST pass its own action explicitly.
+  // Fresh, unused, unreserved, unexpired, matching site (exact host match, not suffix). When
+  // `action` is given, also requires an exact action match - omitting it preserves the
+  // pre-Phase-5 behaviour (match any action), which is only safe because every pre-Phase-5
+  // approval on disk is CREDENTIAL_FILL; every Phase 5 caller MUST pass its own action explicitly.
   find(site: string, nowMs: number, action?: ApprovalAction): Approval | null;
+  // Atomically claims a specific approval for one in-flight op: unused -> reserved in ONE
+  // synchronous read-modify-write, so of N concurrent callers exactly one reserve() wins and the
+  // rest get false (they must deny WITHOUT touching the browser). Returns false if already used,
+  // expired, missing, or already reserved.
+  reserve(id: string, nowMs: number): boolean;
   // Marks used; false if already used/expired/missing. Re-reads from disk so it stays
-  // correct even if this process is not the only reader/writer of the approvals dir.
+  // correct even if this process is not the only reader/writer of the approvals dir. The caller
+  // MUST check this return value after a successful actor call and deny when it is false -
+  // ignoring it is what let the second racing caller through before the reserve step existed.
   consume(id: string, nowMs: number): boolean;
+  // Rolls a reservation back (best-effort) when the reserved op did NOT complete - actor threw,
+  // or reported failure. The grant returns to the findable pool, preserving the long-standing
+  // behaviour that a failed attempt never burns the human's single-use approval. A reservation
+  // stranded by a process crash simply stays unfindable until TTL expiry: fail-closed, and the
+  // human re-approves.
+  release(id: string): void;
 }
 
 function pathFor(dir: string, id: string): string {
@@ -61,7 +79,7 @@ function readApproval(dir: string, id: string): Approval | null {
 }
 
 function isFresh(a: Approval, nowMs: number): boolean {
-  return !a.used && a.expires_ms > nowMs;
+  return !a.used && !a.reserved && a.expires_ms > nowMs;
 }
 
 function normalizeSite(site: string): string {
@@ -93,10 +111,29 @@ export function fileApprovalStore(dir: string): ApprovalStore {
     consume(id, nowMs) {
       const a = readApproval(dir, id);
       if (!a) return false;
-      if (!isFresh(a, nowMs)) return false;
-      const updated: Approval = { ...a, used: true };
+      // consume is the CONFIRM step of reserve-then-confirm: it requires unused+unexpired, but
+      // deliberately NOT "unreserved" - the caller that reserved this id is exactly who is
+      // confirming. The reserved flag is cleared on use.
+      if (a.used || a.expires_ms <= nowMs) return false;
+      const updated: Approval = { ...a, used: true, reserved: false };
       writeFileSync(pathFor(dir, id), JSON.stringify(updated));
       return true;
+    },
+    reserve(id, nowMs) {
+      const a = readApproval(dir, id);
+      if (!a || !isFresh(a, nowMs)) return false; // isFresh also excludes already-reserved
+      writeFileSync(pathFor(dir, id), JSON.stringify({ ...a, reserved: true }));
+      return true;
+    },
+    release(id) {
+      let a: Approval | null = null;
+      try { a = readApproval(dir, id); } catch { return; }
+      if (!a || !a.reserved || a.used) return;
+      try {
+        writeFileSync(pathFor(dir, id), JSON.stringify({ ...a, reserved: false }));
+      } catch {
+        // best-effort rollback only - see the interface comment
+      }
     }
   };
 }
