@@ -1,6 +1,7 @@
 ﻿import { appendFileSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, sign as edSign, verify as edVerify, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 export interface AuditRecord {
   ts: number; run_id: string; actor: string; action: string;
@@ -98,17 +99,100 @@ export function verifyLog(path: string, publicPem: string): { ok: boolean; count
 }
 
 // Key bootstrap: load from env or a gitignored keyfile pair; generate on first run.
+//
+// The private key is DPAPI-PROTECTED at rest (Windows CurrentUser scope, the same mechanism the
+// Comet vault reader uses): mode 0o600 is largely ignored by Windows ACLs, so a plaintext PEM in
+// %USERPROFILE%\\.comet-mcp was readable by any process running as the user - same exposure class
+// as the credential vault this codebase already guards. On-disk format is a JSON envelope
+// {"v":1,"wrapped":<base64 DPAPI blob>}; a legacy plaintext PEM file is migrated to the envelope
+// on first load (best-effort: if DPAPI is unavailable - non-Windows, odd CI - the plaintext file
+// is kept and behavior matches the old implementation). Env-var keys are never touched.
 export function loadOrCreateKeys(dir: string): { priv: string; pub: string } {
+  return loadOrCreateKeysWith(dir, powershellDpapi());
+}
+
+export interface DpapiAdapter {
+  // null = DPAPI unavailable on this machine; callers fall back to plaintext-at-rest.
+  protect(plain: Buffer): Buffer | null;
+  unprotect(wrapped: Buffer): Buffer | null;
+}
+
+function powershellDpapi(): DpapiAdapter {
+  // Key bytes travel via stdin (base64), never the command line, so they never land in a
+  // process listing - same pattern as credential_store.unwrapMasterKey.
+  const run = (script: string, inputB64: string): string =>
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script],
+      { input: inputB64, encoding: "utf8" }).trim();
+  const protectScript = [
+    "Add-Type -AssemblyName System.Security",
+    "$b64 = [Console]::In.ReadToEnd().Trim()",
+    "$bytes = [System.Convert]::FromBase64String($b64)",
+    "$p = [System.Security.Cryptography.ProtectedData]::Protect(" +
+      "$bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)",
+    "[System.Convert]::ToBase64String($p)"
+  ].join("; ");
+  const unprotectScript = [
+    "Add-Type -AssemblyName System.Security",
+    "$b64 = [Console]::In.ReadToEnd().Trim()",
+    "$bytes = [System.Convert]::FromBase64String($b64)",
+    "$u = [System.Security.Cryptography.ProtectedData]::Unprotect(" +
+      "$bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)",
+    "[System.Convert]::ToBase64String($u)"
+  ].join("; ");
+  return {
+    protect(plain) {
+      try { return Buffer.from(run(protectScript, plain.toString("base64")), "base64"); }
+      catch { return null; }
+    },
+    unprotect(wrapped) {
+      try { return Buffer.from(run(unprotectScript, wrapped.toString("base64")), "base64"); }
+      catch { return null; }
+    }
+  };
+}
+
+export function loadOrCreateKeysWith(dir: string, dpapi: DpapiAdapter): { priv: string; pub: string } {
   const privPath = join(dir, "audit.key");
   const pubPath = join(dir, "audit.pub");
   if (process.env.COMET_AUDIT_KEY && process.env.COMET_AUDIT_PUB)
     return { priv: process.env.COMET_AUDIT_KEY, pub: process.env.COMET_AUDIT_PUB };
-  if (existsSync(privPath) && existsSync(pubPath))
-    return { priv: readFileSync(privPath, "utf8"), pub: readFileSync(pubPath, "utf8") };
+  if (existsSync(privPath) && existsSync(pubPath)) {
+    const raw = readFileSync(privPath, "utf8");
+    if (raw.startsWith("{")) {
+      // Envelope format. An unwrap failure here is terminal BY DESIGN: the key is unrecoverable
+      // (different Windows user, profile corruption) and silently regenerating would invalidate
+      // every existing signature in the audit log - a tamper-evident log whose signer can be
+      // quietly swapped is not tamper-evident.
+      let plain: Buffer | null = null;
+      try {
+        const env = JSON.parse(raw) as { v?: number; wrapped?: string };
+        if (env.v === 1 && typeof env.wrapped === "string")
+          plain = dpapi.unprotect(Buffer.from(env.wrapped, "base64"));
+      } catch { /* malformed envelope -> plain stays null */ }
+      if (plain === null || !plain.toString("utf8").includes("PRIVATE KEY")) {
+        throw new Error("audit private key could not be unwrapped (DPAPI CurrentUser mismatch or corrupted keyfile)");
+      }
+      return { priv: plain.toString("utf8"), pub: readFileSync(pubPath, "utf8") };
+    }
+    // Legacy plaintext PEM: return it, then migrate to the envelope best-effort so the
+    // plaintext copy stops existing after the first successful load.
+    const wrapped = dpapi.protect(Buffer.from(raw, "utf8"));
+    if (wrapped !== null) {
+      try {
+        writeFileSync(privPath, JSON.stringify({ v: 1, wrapped: wrapped.toString("base64") }), { mode: 0o600 });
+      } catch { /* keep the legacy file rather than losing the key */ }
+    }
+    return { priv: raw, pub: readFileSync(pubPath, "utf8") };
+  }
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const priv = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   const pub = publicKey.export({ type: "spki", format: "pem" }).toString();
-  writeFileSync(privPath, priv, { mode: 0o600 });
+  const wrapped = dpapi.protect(Buffer.from(priv, "utf8"));
+  if (wrapped !== null) {
+    writeFileSync(privPath, JSON.stringify({ v: 1, wrapped: wrapped.toString("base64") }), { mode: 0o600 });
+  } else {
+    writeFileSync(privPath, priv, { mode: 0o600 });
+  }
   writeFileSync(pubPath, pub);
   return { priv, pub };
 }

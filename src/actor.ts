@@ -178,6 +178,19 @@ export class CometActor {
       for (let attempt = 0; attempt < attempts; attempt++) {
         try {
           await this.g.assert({ predicate: "value-contains", name: "Address and search bar", role: "edit", text: needle });
+          // Omnibox substring is still not PROOF of where the tab is (a redirector can strip the
+          // path after the assert, or echo the host in a query). When the bridge is wired, read
+          // the tab's REAL url back - the same channel handleRead uses - and compare parsed
+          // hostnames, mirroring the bridge navigate path's verification strength. Read-back
+          // failure keeps the omnibox verdict: this is the FALLBACK path, and failing it open to
+          // a hard deny on every bridge hiccup would break navigation entirely.
+          const realHost = await this.activeTabHost();
+          if (realHost !== null && realHost !== host.toLowerCase()) {
+            return {
+              ok: false, landed: false,
+              reason: `navigation did not land on ${host}: tab is on ${realHost || "an unparseable url"}`
+            };
+          }
           return { ok: true, landed: true };
         } catch (err) {
           lastErr = (err as Error).message;
@@ -186,6 +199,20 @@ export class CometActor {
       }
     }
     return { ok: false, landed: false, reason: `navigation did not land on ${host}: ${lastErr}` };
+  }
+
+  // Reads the active tab's real url through the bridge reader and returns its parsed hostname,
+  // or null when the bridge is unwired or the read fails (caller keeps its existing verdict).
+  private async activeTabHost(): Promise<string | null> {
+    if (!this.bridge) return null;
+    try {
+      const raw = await this.bridge.read();
+      const url = raw && typeof raw === "object" ? (raw as { url?: unknown }).url : undefined;
+      if (typeof url !== "string" || !url) return null;
+      try { return new URL(url).hostname.toLowerCase() || null; } catch { return ""; }
+    } catch {
+      return null;
+    }
   }
 
   // ghost_act returns { ok, verified }; verified:false means the click/type dispatched but
