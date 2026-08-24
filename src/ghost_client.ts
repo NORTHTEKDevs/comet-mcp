@@ -142,9 +142,18 @@ export class GhostTools {
     return this.c.call(method, args) as Promise<T>;
   }
 
-  list_windows(): Promise<{ windows: GhostWindow[] }> { return this.call("ghost_window", { op: "list" }); }
+  list_windows(): Promise<{ windows: Array<{ name: string; pid: number; focused: boolean }> }> { return this.call("ghost_window", { op: "list" }); }
   focus_window(name: string): Promise<{ ok: true }> { return this.call("ghost_window", { op: "focus", name }); }
   launch(exe: string): Promise<{ ok: true }> { return this.call("ghost_window", { op: "launch", exe }); }
+  // REQUIRED before any real-input verb (focus/click/type/press) on ghost >= 0.19: its focus
+  // policy defaults to 'background', which REJECTS every input verb with "'focus_window' has no
+  // background path and the focus policy is 'background'" - found live 2026-08-23 (unit fakes
+  // accepted focus unconditionally, so the suite could not see this). 'prefer_background' lets
+  // the server take foreground only when an input verb actually needs it, instead of stealing
+  // the user's focus on every call.
+  set_focus_policy(policy: "prefer_background" | "foreground"): Promise<{ ok: true }> {
+    return this.call("ghost_set_focus_policy", { policy });
+  }
   hotkey(modifiers: string[], key: string): Promise<{ ok: true }> { return this.call("ghost_key", { keys: [...modifiers, key].join("+") }); }
   // window is optional so existing callers (comet_driver.ts) are unaffected; passing it scopes
   // the key to a specific window rather than whatever currently owns OS focus (recommended by
