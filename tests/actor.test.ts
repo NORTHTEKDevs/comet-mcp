@@ -190,3 +190,32 @@ describe("CometActor", () => {
     });
   });
 });
+
+// Ghost-fallback landing verification (2026-08-23 hardening): the omnibox value-contains assert
+// is substring-based, so a redirector that echoes the host in a query ("evil.net?ref=good.com")
+// used to pass. When the bridge is wired, the actor now reads the tab's REAL url back and
+// compares parsed hostnames - mirroring the bridge navigate path's verification strength.
+describe("CometActor ghost-fallback landing verification", () => {
+  it("denies when the omnibox contains the host but the tab is really elsewhere", async () => {
+    class EchoGhost extends FakeGhost {} // assert passes: omnibox contains the needle
+    const lyingBridge = { async read() { return { url: "https://evil.net/?ref=mail.google.com" }; } };
+    const a = new CometActor(new EchoGhost() as any, lyingBridge as any);
+    const r = await a.navigate("https://mail.google.com");
+    expect(r.ok).toBe(false);
+    expect((r as any).reason).toMatch(/tab is on evil\.net/);
+  });
+
+  it("confirms landing when the read-back hostname matches", async () => {
+    const honestBridge = { async read() { return { url: "https://mail.google.com/inbox" }; } };
+    const a = new CometActor(new FakeGhost() as any, honestBridge as any);
+    const r = await a.navigate("https://mail.google.com");
+    expect(r).toEqual({ ok: true, landed: true });
+  });
+
+  it("keeps the omnibox verdict when the bridge read fails (fallback stays usable)", async () => {
+    const deadBridge = { async read() { throw new Error("relay down"); } };
+    const a = new CometActor(new FakeGhost() as any, deadBridge as any);
+    const r = await a.navigate("https://mail.google.com");
+    expect(r).toEqual({ ok: true, landed: true });
+  });
+});

@@ -116,6 +116,25 @@ function isNumericSecret(run: string): boolean {
 
 // Exported so it is independently testable per the task spec.
 export function looksLikeCredential(s: string): boolean {
+  if (typeof s !== "string") return false;
+  if (matchesCredentialShapes(s)) return true;
+  // Encoded-form layer (probe finding): percent/JS-escape decoding is the cheapest obfuscation
+  // that evades every literal detector - "%70assword%3Dhunter2" and "password\u003Dhunter2"
+  // sailed through all four rules. Scan a DECODED COPY with the same detectors: detection only,
+  // so the decoded text itself never reaches any output. Bounded at 2 decode passes - one pass
+  // catches single-encoded forms, two catches double-encoded; deeper nesting is diminishing
+  // returns for an obfuscation anyone can reverse, and unbounded decoding is a CPU amplifier.
+  let decoded = s;
+  for (let i = 0; i < 2; i++) {
+    const next = decodeObfuscation(decoded);
+    if (next === decoded) break;
+    decoded = next;
+    if (matchesCredentialShapes(decoded)) return true;
+  }
+  return false;
+}
+
+function matchesCredentialShapes(s: string): boolean {
   if (CREDENTIAL_PREFIXES.some(p => s.includes(p))) return true;
   if (ASSIGNMENT_RE.test(s)) return true;
   const candidates = s.match(CANDIDATE_TOKEN_RE);
@@ -123,6 +142,30 @@ export function looksLikeCredential(s: string): boolean {
   const digitRuns = s.match(DIGIT_RUN_RE);
   if (digitRuns && digitRuns.some(isNumericSecret)) return true;
   return false;
+}
+
+// Decode the two escape families that hide credential assignments from literal matching:
+// percent-encoding ("%70assword%3D") and JS unicode/hex escapes ("password\u003D", "\x3D").
+// Poison-resistant like decodeRepeatedly: an invalid escape stays literal instead of aborting
+// the pass. NOT applied to redactCredentials output - that replaces text and cannot map decoded
+// positions back to the original; the egress gate above is the boundary that must not be
+// fooled, and it now decodes before deciding.
+function decodeObfuscation(s: string): string {
+  let out = s.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    try { return decodeURIComponent(run); } catch { /* fall through to per-escape */ }
+    let acc = "";
+    for (const esc of run.match(/%[0-9A-Fa-f]{2}/g) ?? []) {
+      try { acc += decodeURIComponent(esc); } catch { acc += esc; }
+    }
+    return acc;
+  });
+  out = out.replace(/\\u\{([0-9A-Fa-f]{1,6})\}|\\u([0-9A-Fa-f]{4})|\\x([0-9A-Fa-f]{2})/g,
+    (_, braced, u4, x2) => {
+      const hex = braced ?? u4 ?? x2;
+      const code = parseInt(hex, 16);
+      return code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : _;
+    });
+  return out;
 }
 
 // Task 38 (Phase 6): a text-REPLACING counterpart to looksLikeCredential (which only detects),
