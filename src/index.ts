@@ -51,6 +51,11 @@ async function main() {
     clientInfo: { name: "comet-mcp", version: "0.0.1" }
   });
   const tools = new GhostTools(ghost_client);
+  // ghost >= 0.19 defaults its focus policy to 'background' and REJECTS every real-input verb
+  // until a policy is set (found live 2026-08-23). 'prefer_background' allows input when a verb
+  // needs it without stealing the user's focus on every call. Best-effort: an older ghost that
+  // lacks the method must not brick startup (the call would reject - swallow it).
+  try { await tools.set_focus_policy("prefer_background"); } catch { /* older ghost: no-op */ }
   const driver = new CometDriver(tools);
 
   mkdirSync(DATA_DIR, { recursive: true });

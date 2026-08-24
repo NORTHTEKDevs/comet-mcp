@@ -100,3 +100,19 @@ describe("GhostClient", () => {
     await expect(promise).resolves.toEqual({ ok: 1 });
   });
 });
+
+// Live-found 2026-08-23: ghost >= 0.19 rejects every real-input verb until a focus policy is
+// set. Pin the wire contract of the setup call so a method/param rename cannot silently break
+// startup again (the failure mode was: suite green, production dead).
+describe("GhostTools.set_focus_policy", () => {
+  it("sends ghost_set_focus_policy with the policy param", async () => {
+    const { GhostTools } = await import("../src/ghost_client.js");
+    const calls: Array<[string, unknown]> = [];
+    const fake = {
+      call(method: string, args: unknown) { calls.push([method, args]); return Promise.resolve({ ok: true }); }
+    };
+    const tools = new GhostTools(fake as never);
+    await tools.set_focus_policy("prefer_background");
+    expect(calls).toEqual([["ghost_set_focus_policy", { policy: "prefer_background" }]]);
+  });
+});
