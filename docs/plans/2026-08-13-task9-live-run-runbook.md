@@ -4,9 +4,9 @@
 
 ### FINAL: **ALL 8 STEPS PASSED** with the extension loaded.
 
-`comet_read` returned **190 elements** from the real logged-in Gmail inbox
-(`url=https://mail.google.com/mail/u/0/#inbox`, `title=[redacted]
-Mail`), with **no raw `value` key anywhere in the output** - field contents never reach model
+`comet_read` returned **190 elements** from a real logged-in Gmail inbox
+(`url=https://mail.google.com/mail/u/0/#inbox`, title redacted), with **no raw `value` key anywhere
+in the output** - field contents never reach model
 context. Audit log verified `{ok:true, count:20}`, and the log provably contains NO page content
 (it records actions, not the data read). Extension: **Comet Bridge 0.2.0**, id
 `ppdkeminodaeipdnkjpkbfmjfpdjaipb`, loaded unpacked from the worktree `extension/` folder.
@@ -73,9 +73,9 @@ dangerous action (they are structurally disabled), but you should watch the firs
 
 **Step 1 - bridge token + extension config** (worktree copies are gitignored, so they do not exist yet):
 ```powershell
-$bw = "%USERPROFILE%\projects\active\comet-bridge\.worktrees\comet-agent-phase1"
+$bw = "$env:USERPROFILE\projects\active\comet-bridge\.worktrees\comet-agent-phase1"
 # reuse the existing token from the main checkout so you don't juggle two secrets
-Copy-Item "%USERPROFILE%\projects\active\comet-bridge\relay\bridge.token" "$bw\relay\bridge.token"
+Copy-Item "$env:USERPROFILE\projects\active\comet-bridge\relay\bridge.token" "$bw\relay\bridge.token"
 Copy-Item "$bw\extension\config.example.js" "$bw\extension\config.js"
 # then EDIT $bw\extension\config.js and paste the token value into RELAY_TOKEN
 Get-Content "$bw\relay\bridge.token"
@@ -88,7 +88,7 @@ Get-Content "$bw\relay\bridge.token"
    only one polls the relay.)
 2. Start the relay with CORS locked to that ID:
 ```powershell
-cd "%USERPROFILE%\projects\active\comet-bridge\.worktrees\comet-agent-phase1"
+cd "$env:USERPROFILE\projects\active\comet-bridge\.worktrees\comet-agent-phase1"
 $env:BRIDGE_EXT_ORIGIN = "chrome-extension://<THE-ID>"
 npm run relay
 ```
@@ -96,12 +96,12 @@ Leave this running. Expect `bridge relay on 127.0.0.1:8787`.
 
 **Step 3 - point Claude Code at the NEW comet-mcp build:**
 ```powershell
-$tok = Get-Content "%USERPROFILE%\projects\active\comet-bridge\.worktrees\comet-agent-phase1\relay\bridge.token"
+$tok = Get-Content "$env:USERPROFILE\projects\active\comet-bridge\.worktrees\comet-agent-phase1\relay\bridge.token"
 claude mcp remove comet -s user
 claude mcp add comet --scope user `
   --env BRIDGE_URL="http://127.0.0.1:8787" `
   --env BRIDGE_TOKEN="$tok" `
-  -- node "%USERPROFILE%\projects\active\comet-mcp\.worktrees\comet-agent-phase1\dist\index.js"
+  -- node "$env:USERPROFILE\projects\active\comet-mcp\.worktrees\comet-agent-phase1\dist\index.js"
 claude mcp get comet   # expect: Status: Connected
 ```
 Note: this repoints the `comet` MCP at the WORKTREE build. After merging to main, re-register
@@ -124,7 +124,7 @@ Pick a benign site you are already logged into. The runbook uses Gmail; substitu
 
 **Step 9 - verify the audit trail** (the whole point of the trust plane):
 ```powershell
-cd "%USERPROFILE%\projects\active\comet-mcp\.worktrees\comet-agent-phase1"
+cd "$env:USERPROFILE\projects\active\comet-mcp\.worktrees\comet-agent-phase1"
 node -e "const{verifyLog,loadOrCreateKeys}=require('./dist/audit.js');const os=require('os'),p=require('path');const d=p.join(os.homedir(),'.comet-mcp');const{pub}=loadOrCreateKeys(d);console.log(verifyLog(p.join(d,'run.audit.jsonl'),pub));"
 Get-Content "$env:USERPROFILE\.comet-mcp\run.audit.jsonl" -Tail 10
 ```

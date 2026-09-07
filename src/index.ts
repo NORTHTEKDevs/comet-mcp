@@ -15,7 +15,7 @@ import { cometCredentialStore } from "./credential_store.js";
 import { fileMissionStore } from "./missions.js";
 
 const GHOST_EXE = process.env.GHOST_MCP_EXE
-  ?? "%USERPROFILE%\\.local\\bin\\ghost-mcp.exe";
+  ?? join(homedir(), ".local", "bin", "ghost-mcp.exe");
 
 // Every comet_* tool call is checked against policy and written to this signed, hash-chained log
 // (see src/audit.ts). Defaults to a per-user data dir outside the repo so keys/log never land in

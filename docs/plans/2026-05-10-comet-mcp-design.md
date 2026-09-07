@@ -1,7 +1,7 @@
-# comet-mcp — Design
+# comet-mcp - Design
 
 **Date:** 2026-05-10
-**Author:** the operator (with Claude Code)
+**Author:** Northtek (with Claude Code)
 **Status:** approved, ready for implementation plan
 
 ## Problem
@@ -13,7 +13,7 @@ Use a Perplexity Pro/Enterprise subscription via the Comet desktop browser as a 
 | # | Decision | Choice |
 |---|----------|--------|
 | 1 | Tool surface | Single tool: `ask_perplexity({query, timeout_ms?}) -> { answer, sources }` |
-| 2 | Extraction | Hybrid — clipboard for answer body, UIA for citation panel |
+| 2 | Extraction | Hybrid - clipboard for answer body, UIA for citation panel |
 | 3 | Comet lifecycle | Find existing window; auto-launch if absent; assume user is signed in |
 | 4 | Repo home | Standalone: `~/projects/active/comet-mcp`, GitHub `NORTHTEKDevs/comet-mcp` (private) |
 | 5 | Implementation | TypeScript + Anthropic MCP SDK, npx-installable |
@@ -35,11 +35,11 @@ Claude Code  ──MCP stdio──>  comet-mcp  ──MCP stdio──>  Ghost (s
 
 ## Modules (TypeScript, single binary)
 
-- `src/index.ts` — bin entry; wires MCP server to ghost client and driver
-- `src/mcp_server.ts` — Anthropic MCP SDK server, stdio transport, single tool registration, zod input schema
-- `src/ghost_client.ts` — typed wrapper over Ghost MCP tools we use: `list_windows`, `focus_window`, `launch`, `hotkey`, `type`, `get_clipboard`, `describe_screen`
-- `src/comet_driver.ts` — orchestration: find-or-launch Comet, focus, type query, submit, poll-for-stable, extract, return
-- `src/extractor.ts` — pure functions: `parse_clipboard_answer`, `walk_citations`, `is_login_wall`, `is_stream_stable`
+- `src/index.ts` - bin entry; wires MCP server to ghost client and driver
+- `src/mcp_server.ts` - Anthropic MCP SDK server, stdio transport, single tool registration, zod input schema
+- `src/ghost_client.ts` - typed wrapper over Ghost MCP tools we use: `list_windows`, `focus_window`, `launch`, `hotkey`, `type`, `get_clipboard`, `describe_screen`
+- `src/comet_driver.ts` - orchestration: find-or-launch Comet, focus, type query, submit, poll-for-stable, extract, return
+- `src/extractor.ts` - pure functions: `parse_clipboard_answer`, `walk_citations`, `is_login_wall`, `is_stream_stable`
 
 ## Data flow (happy path)
 
@@ -76,15 +76,15 @@ Claude Code  ──MCP stdio──>  comet-mcp  ──MCP stdio──>  Ghost (s
 
 **Three layers, scaled to risk.**
 
-1. **Unit (vitest, ~15 tests)** — pure functions in `extractor.ts`:
-   - `parse_clipboard_answer()` — strip Comet UI noise, handle empty/partial input
-   - `walk_citations(uia_tree_fixture)` — extract `[{n, title, url}]`
-   - `is_login_wall(uia_tree_fixture)` — detect sign-in modals
-   - `is_stream_stable(prev, curr)` — boundary cases
-2. **Integration (fixture-replay, ~5 scripts)** — saved real UIA trees + saved clipboard strings:
+1. **Unit (vitest, ~15 tests)** - pure functions in `extractor.ts`:
+   - `parse_clipboard_answer()` - strip Comet UI noise, handle empty/partial input
+   - `walk_citations(uia_tree_fixture)` - extract `[{n, title, url}]`
+   - `is_login_wall(uia_tree_fixture)` - detect sign-in modals
+   - `is_stream_stable(prev, curr)` - boundary cases
+2. **Integration (fixture-replay, ~5 scripts)** - saved real UIA trees + saved clipboard strings:
    - Capture once per Comet UI version via `node scripts/capture-fixture.mjs "<query>"`
    - Replay in tests to assert structured output. UI drift becomes a fixture-update task, not a code-debugging task.
-3. **End-to-end (live Comet, 1 smoke)** — `npm run smoke`:
+3. **End-to-end (live Comet, 1 smoke)** - `npm run smoke`:
    - Hits real Comet with one canned query
    - Asserts answer length > 200, sources length ≥ 1
    - Local-only, run before each release. Not in CI (no Comet on GitHub Actions).
@@ -99,14 +99,14 @@ Claude Code  ──MCP stdio──>  comet-mcp  ──MCP stdio──>  Ghost (s
 - Concurrent queries (Comet UI can't support them anyway)
 - Linux / macOS (Ghost is Windows-only)
 - Auto-login / credential management
-- Dedicated background Comet profile (`--user-data-dir`) — day-2 polish if focus-stealing becomes a UX problem
+- Dedicated background Comet profile (`--user-data-dir`) - day-2 polish if focus-stealing becomes a UX problem
 
 ## Risks & mitigations
 
 | Risk | Mitigation |
 |---|---|
 | Perplexity changes Comet's UI/UX | Fixture-replay test layer makes UI drift a low-touch test-data update |
-| Comet detects automation and blocks | Ghost uses native SendInput, not CDP — much harder to detect than headless Chromium |
+| Comet detects automation and blocks | Ghost uses native SendInput, not CDP - much harder to detect than headless Chromium |
 | Slow render dominates per-query latency | Accepted trade-off vs API cost; documented in README |
 | Login wall after subscription expires | Hard-fail with actionable error message; user re-authenticates manually |
 | Clipboard contention with user typing | Mutex prevents internal contention; user is unlikely to be using clipboard during the 10-30s query window |

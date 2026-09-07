@@ -861,7 +861,7 @@ git -C ~/projects/active/comet-mcp commit -m "feat(mcp): run manager + tools (se
 
 - Re-register comet-mcp if entrypoint/env changed:
 ```bash
-MSYS_NO_PATHCONV=1 claude mcp add comet --scope user --env BRIDGE_URL="http://127.0.0.1:8787" --env BRIDGE_TOKEN="..." -- node "%USERPROFILE%\\projects\\active\\comet-mcp\\dist\\index.js"
+MSYS_NO_PATHCONV=1 claude mcp add comet --scope user --env BRIDGE_URL="http://127.0.0.1:8787" --env BRIDGE_TOKEN="..." -- node "$HOME/projects/active/comet-mcp/dist/index.js"
 ```
 - Verify: `claude mcp get comet` shows Connected.
 - Commit docs.

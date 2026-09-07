@@ -8,7 +8,7 @@ grant) allows, and every credential op additionally needs a single-use out-of-ba
 
 ```powershell
 # 1. relay (leave running)
-cd %USERPROFILE%\projects\active\comet-bridge\.worktrees\comet-agent-phase1
+cd $env:USERPROFILE\projects\active\comet-bridge\.worktrees\comet-agent-phase1
 $env:BRIDGE_EXT_ORIGIN = "chrome-extension://ppdkeminodaeipdnkjpkbfmjfpdjaipb"
 node relay/server.js
 
@@ -32,7 +32,7 @@ One signed grant covers the whole flow, including the 2FA detour. The service do
 domain must both be in scope, or the code-reading step is denied.
 
 ```powershell
-cd %USERPROFILE%\projects\active\comet-mcp\.worktrees\comet-agent-phase1
+cd $env:USERPROFILE\projects\active\comet-mcp\.worktrees\comet-agent-phase1
 
 # The human authorises the envelope, out of band, ONCE:
 node scripts/mission.mjs `

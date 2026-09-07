@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { spawn_ghost, GhostTools } from "../dist/ghost_client.js";
 import { CometDriver } from "../dist/comet_driver.js";
 
 const ghost = spawn_ghost(process.env.GHOST_MCP_EXE
-  ?? "%USERPROFILE%\\projects\\active\\ghost\\target\\release\\ghost-mcp.exe");
+  ?? join(homedir(), ".local", "bin", "ghost-mcp.exe"));
 await ghost.call("initialize", {
   protocolVersion: "2024-11-05",
   capabilities: {},

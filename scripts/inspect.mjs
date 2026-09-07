@@ -5,9 +5,11 @@
 // Captures one snapshot of describe_screen("Comet") so we can see what elements/roles Perplexity actually exposes.
 import { spawn_ghost, GhostTools } from "../dist/ghost_client.js";
 import { writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const ghost = spawn_ghost(process.env.GHOST_MCP_EXE
-  ?? "%USERPROFILE%\\projects\\active\\ghost\\target\\release\\ghost-mcp.exe");
+  ?? join(homedir(), ".local", "bin", "ghost-mcp.exe"));
 await ghost.call("initialize", {
   protocolVersion: "2024-11-05",
   capabilities: {},

@@ -3,6 +3,8 @@
 import { spawn_ghost, GhostTools } from "../dist/ghost_client.js";
 import { CometDriver } from "../dist/comet_driver.js";
 import { writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const [, , query, out_path] = process.argv;
 if (!query || !out_path) {
@@ -11,7 +13,7 @@ if (!query || !out_path) {
 }
 
 const ghost = spawn_ghost(process.env.GHOST_MCP_EXE
-  ?? "%USERPROFILE%\\projects\\active\\ghost\\target\\release\\ghost-mcp.exe");
+  ?? join(homedir(), ".local", "bin", "ghost-mcp.exe"));
 await ghost.call("initialize", {
   protocolVersion: "2024-11-05",
   capabilities: {},

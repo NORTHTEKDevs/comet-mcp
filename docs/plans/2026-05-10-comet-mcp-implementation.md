@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Ship v0 of comet-mcp — a Node/TypeScript MCP server that exposes one tool, `ask_perplexity({query, timeout_ms?}) -> { answer, sources, truncated? }`, by spawning Ghost MCP as a child process and orchestrating Perplexity Comet on Windows.
+**Goal:** Ship v0 of comet-mcp - a Node/TypeScript MCP server that exposes one tool, `ask_perplexity({query, timeout_ms?}) -> { answer, sources, truncated? }`, by spawning Ghost MCP as a child process and orchestrating Perplexity Comet on Windows.
 
 **Architecture:** comet-mcp speaks MCP-stdio to Claude Code. Internally it spawns `ghost-mcp.exe` as a child and speaks MCP-stdio to it (JSON-RPC 2.0). The driver finds (or launches) Comet, types the query, polls UIA until the answer stream stabilizes, then extracts the answer from the clipboard and citations from the UIA tree. See `docs/plans/2026-05-10-comet-mcp-design.md` for the full design.
 
@@ -20,8 +20,8 @@
 
 ```bash
 node --version    # >= v20
-ls "%USERPROFILE%/projects/active/ghost/target/release/ghost-mcp.exe"  # must exist
-ls "%USERPROFILE%/AppData/Local/Comet/"                                 # must exist
+ls "$HOME/projects/active/ghost/target/release/ghost-mcp.exe"  # must exist
+ls "$HOME/AppData/Local/Comet/"                                 # must exist
 ```
 
 If any check fails, STOP and surface to the user.
@@ -57,7 +57,7 @@ Expected: exits 0 with no output. (`src/index.ts` currently throws at runtime bu
 npx vitest run
 ```
 
-Expected: "No test files found" — that's correct for now.
+Expected: "No test files found" - that's correct for now.
 
 **Step 4: Commit**
 
@@ -410,7 +410,7 @@ git commit -m "feat(extractor): walk_citations + is_login_wall + synthetic fixtu
 
 ---
 
-## Task 5: ghost_client.ts — JSON-RPC over stdio plumbing (TDD)
+## Task 5: ghost_client.ts - JSON-RPC over stdio plumbing (TDD)
 
 Spawn `ghost-mcp.exe` as a child, send MCP `initialize` + `tools/call` over stdio, parse responses. We test the JSON framing logic against a mock child process.
 
@@ -569,7 +569,7 @@ git commit -m "feat(ghost_client): json-rpc stdio plumbing + tests"
 
 ---
 
-## Task 6: ghost_client.ts — typed wrapper methods + spawn helper
+## Task 6: ghost_client.ts - typed wrapper methods + spawn helper
 
 Add typed methods for the Ghost tools we use, plus a `spawn_ghost()` factory.
 
@@ -634,12 +634,12 @@ git commit -m "feat(ghost_client): spawn_ghost factory + GhostTools typed wrappe
 
 ---
 
-## Task 7: comet_driver.ts — find-or-launch Comet (with mutex)
+## Task 7: comet_driver.ts - find-or-launch Comet (with mutex)
 
 **Files:**
 - Create: `src/comet_driver.ts`
 
-**Step 1: Implement (no unit test — covered by integration smoke)**
+**Step 1: Implement (no unit test - covered by integration smoke)**
 
 `src/comet_driver.ts`:
 
@@ -774,7 +774,7 @@ git commit -m "feat(comet_driver): ask() orchestration with mutex + polling"
 
 ---
 
-## Task 8: mcp_server.ts — register `ask_perplexity` tool
+## Task 8: mcp_server.ts - register `ask_perplexity` tool
 
 **Files:**
 - Create: `src/mcp_server.ts`
@@ -855,7 +855,7 @@ git commit -m "feat(mcp_server): register ask_perplexity tool"
 
 ---
 
-## Task 9: index.ts — wire entrypoint
+## Task 9: index.ts - wire entrypoint
 
 **Files:**
 - Modify: `src/index.ts`
@@ -901,13 +901,13 @@ npm run build
 
 Expected: `dist/index.js` and friends appear, no errors.
 
-**Step 3: Smoke-launch (no real query yet — just verify it boots)**
+**Step 3: Smoke-launch (no real query yet - just verify it boots)**
 
 ```bash
 node dist/index.js < /dev/null
 ```
 
-Expected: process starts, attempts to spawn ghost-mcp, then exits when stdin closes. If ghost exe path is wrong you'll see a clear "ENOENT" stderr line — fix `GHOST_MCP_EXE` env var.
+Expected: process starts, attempts to spawn ghost-mcp, then exits when stdin closes. If ghost exe path is wrong you'll see a clear "ENOENT" stderr line - fix `GHOST_MCP_EXE` env var.
 
 **Step 4: Commit**
 
@@ -918,7 +918,7 @@ git commit -m "feat(index): wire entrypoint and spawn ghost child"
 
 ---
 
-## Task 10: scripts/capture-fixture.mjs — record real UIA tree
+## Task 10: scripts/capture-fixture.mjs - record real UIA tree
 
 Lets us replace the synthetic fixtures with real ones once Comet is reachable.
 
@@ -979,7 +979,7 @@ git commit -m "feat(scripts): capture-fixture for recording real UIA trees"
 
 ---
 
-## Task 11: scripts/smoke.mjs — live end-to-end check
+## Task 11: scripts/smoke.mjs - live end-to-end check
 
 **Files:**
 - Create: `scripts/smoke.mjs`
@@ -1025,9 +1025,9 @@ npm run build && node scripts/smoke.mjs
 ```
 
 Expected outcomes (any of these is acceptable info, decide what to do):
-- "SMOKE OK" — done. Ship it.
-- Specific error message (login wall, exe not found, timeout) — fix the env/state and retry.
-- Crash with stack — debug. Most likely UIA shape mismatch; capture fixture and update `walk_citations` accordingly.
+- "SMOKE OK" - done. Ship it.
+- Specific error message (login wall, exe not found, timeout) - fix the env/state and retry.
+- Crash with stack - debug. Most likely UIA shape mismatch; capture fixture and update `walk_citations` accordingly.
 
 **Step 3: Commit**
 
@@ -1054,11 +1054,11 @@ npm link    # exposes `comet-mcp` on PATH from this checkout
 
 ```bash
 MSYS_NO_PATHCONV=1 claude mcp add comet --scope user \
-  --env GHOST_MCP_EXE="%USERPROFILE%\\projects\\active\\ghost\\target\\release\\ghost-mcp.exe" \
+  --env GHOST_MCP_EXE="$HOME/projects/active/ghost/target/release/ghost-mcp.exe" \
   -- comet-mcp
 ```
 
-(Note `MSYS_NO_PATHCONV=1` — see `feedback_claude_mcp_add_windows.md`.)
+(Note `MSYS_NO_PATHCONV=1` - required so Git Bash does not mangle the Windows path argument.)
 
 **Step 3: Verify connection**
 
@@ -1076,7 +1076,7 @@ comet:
 
 **Step 4: Manual end-to-end from Claude Code**
 
-In a fresh Claude Code session, ask: *"Use the comet `ask_perplexity` tool to find the latest Tauri release version."* — verify a real answer with sources comes back.
+In a fresh Claude Code session, ask: *"Use the comet `ask_perplexity` tool to find the latest Tauri release version."* - verify a real answer with sources comes back.
 
 **Step 5: Commit (no repo change, but log the registration in README)**
 
@@ -1114,11 +1114,11 @@ Expected: 0 errors.
 git push
 ```
 
-Per the auto-push rule (`feedback_auto_push.md`), every commit must reach the remote.
+Every commit must reach the remote.
 
-**Step 4: Update MEMORY.md index entry**
+**Step 4: Record the project in your own notes index**
 
-Add to the Active Projects section of `%USERPROFILE%\.claude\projects\<your-project-slug>\memory\MEMORY.md`:
+Suggested entry:
 
 ```
 ### comet-mcp (SHIPPED YYYY-MM-DD — Comet bridge for Claude Code)
@@ -1129,19 +1129,19 @@ Add to the Active Projects section of `%USERPROFILE%\.claude\projects\<your-proj
 
 ## Implementation order summary
 
-1. Task 1 — install deps
-2. Tasks 2-4 — extractor pure functions (TDD)
-3. Tasks 5-6 — ghost_client (mocked test + typed wrapper)
-4. Task 7 — comet_driver
-5. Task 8 — mcp_server
-6. Task 9 — index entrypoint
-7. Task 10 — capture-fixture script
-8. Task 11 — smoke script (first live moment)
-9. Task 12 — register in Claude Code
-10. Task 13 — push + memory update
+1. Task 1 - install deps
+2. Tasks 2-4 - extractor pure functions (TDD)
+3. Tasks 5-6 - ghost_client (mocked test + typed wrapper)
+4. Task 7 - comet_driver
+5. Task 8 - mcp_server
+6. Task 9 - index entrypoint
+7. Task 10 - capture-fixture script
+8. Task 11 - smoke script (first live moment)
+9. Task 12 - register in Claude Code
+10. Task 13 - push + memory update
 
 **If smoke fails at Task 11**, the most likely root cause is UIA tree shape divergence from the synthetic fixtures. Capture a real fixture (Task 10), inspect it, update `walk_citations` and/or `is_login_wall` selectors, re-run unit tests, re-smoke.
 
 **If smoke fails with login wall**, the user signs in to Comet manually once, then re-runs.
 
-**If `ghost.list_windows()` returns no Comet entries even when Comet is open**, the Ghost UIA tree may not enumerate Chromium windows by default — check Ghost logs and consider a `ghost_focus_window` by title fallback.
+**If `ghost.list_windows()` returns no Comet entries even when Comet is open**, the Ghost UIA tree may not enumerate Chromium windows by default - check Ghost logs and consider a `ghost_focus_window` by title fallback.

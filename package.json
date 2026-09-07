@@ -4,6 +4,8 @@
   "description": "MCP server that bridges Claude Code to Perplexity Comet via Ghost (Windows native automation).",
   "type": "module",
   "private": true,
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/NORTHTEKDevs/comet-mcp.git" },
   "bin": {
     "comet-mcp": "dist/index.js"
   },
